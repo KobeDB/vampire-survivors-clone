@@ -36,7 +36,7 @@ main :: proc() {
         e.pos = pos
         e.dim = {40,40}
         e.max_move_speed = 50
-        e.health = 10000
+        e.health = 150
         pool_add(&enemies, e)
     }
 
@@ -51,6 +51,16 @@ main :: proc() {
     pool_add(&weapons, make_whip(&damage_zones))
     pool_add(&weapons, make_bibles(&damage_zones))
     pool_add(&weapons, make_magic_wand(&damage_zones))
+
+    Damage_Indicator :: struct {
+        damage: int,
+        pos: [2]f32,
+        remaining_display_time: int, // in ticks
+    }
+    MAX_DAMAGE_INDICATORS :: 10000
+    DAMAGE_INDICATOR_DISPLAY_TIME :: 50
+    damage_indicators: Pool(Damage_Indicator)
+    pool_init(&damage_indicators, MAX_DAMAGE_INDICATORS)
 
     camera: rl.Camera2D
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
@@ -142,6 +152,15 @@ main :: proc() {
             }
         }
 
+        // Update damage indicators
+        for i in 0..<len(damage_indicators.slots) {
+            indicator, _ := pool_index_get(damage_indicators, i) or_continue
+            indicator.remaining_display_time -= 1
+            if indicator.remaining_display_time <= 0 {
+                pool_index_free(&damage_indicators, i)
+            }
+        }
+
         // Damage enemies
         for ei in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, ei) or_continue
@@ -167,10 +186,14 @@ main :: proc() {
                     if !was_in_zone_prev_tick {
                         // apply damage
                         e.health -= dz.damage
+
                         // apply knockback
                         // TODO: should knockback be applied right here?
                         away_from_player := -linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
                         e.velocity = away_from_player * 100
+
+                        // create damage indicator
+                        pool_add(&damage_indicators, Damage_Indicator{ damage=int(dz.damage), pos=e.pos, remaining_display_time=DAMAGE_INDICATOR_DISPLAY_TIME})
                     }
                 }
             }
@@ -189,7 +212,7 @@ main :: proc() {
         // ---------------
         rl.BeginDrawing()
 
-        rl.ClearBackground(rl.RAYWHITE)
+        rl.ClearBackground(rl.LIGHTGRAY)
 
 
         rl.BeginMode2D(camera)
@@ -226,6 +249,13 @@ main :: proc() {
             for i in 0..<len(enemies.slots) {
                 e, _ := pool_index_get(enemies, i) or_continue
                 rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.RED)
+            }
+
+            // Draw damage indicators
+            for i in 0..<len(damage_indicators.slots) {
+                indicator, _ := pool_index_get(damage_indicators, i) or_continue
+                rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
+                rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 22, rl.BLACK)
             }
 
         rl.EndMode2D()
@@ -404,7 +434,7 @@ BIBLES_LIFETIME :: 500
 BIBLES_COOLDOWN :: 200
 BIBLES_REVOLUTIONS :: 3
 BIBLES_RADIUS :: 200
-BIBLES_DAMAGE :: 50
+BIBLES_DAMAGE :: 20
 
 make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     bibles: [3]Pool_Handle(Damage_Zone)
@@ -444,7 +474,7 @@ Magic_Wand_Projectile :: struct {
 
 MAGIC_WAND_COOLDOWN :: 200
 MAGIC_WAND_DAMAGE :: 30
-MAGIC_WAND_MAX_PROJECTILES :: 1000
+MAGIC_WAND_MAX_PROJECTILES :: 100
 MAGIC_WAND_PROJECTILE_LIFETIME :: 300
 MAGIC_WAND_PROJECTILE_SPEED :: 300
 
@@ -452,7 +482,7 @@ make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
-    result.num_projectiles_to_fire = 100
+    result.num_projectiles_to_fire = 1
     return result
 }
 
