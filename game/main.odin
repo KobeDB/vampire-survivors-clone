@@ -30,12 +30,13 @@ main :: proc() {
     pool_init(&enemies, MAX_ENEMIES)
 
     for i in 0..<MAX_ENEMIES {
-        pos := [2]f32{rand.float32_range(-1000,1000), rand.float32_range(-1000,1000)}
+        enemy_spread: f32 = MAX_ENEMIES * 10
+        pos := [2]f32{rand.float32_range(-enemy_spread,enemy_spread), rand.float32_range(-enemy_spread,enemy_spread)}
         e: Entity
         e.pos = pos
-        e.dim = {20,20}
-        e.move_speed = 50
-        e.health = 100
+        e.dim = {40,40}
+        e.max_move_speed = 50
+        e.health = 10000
         pool_add(&enemies, e)
     }
 
@@ -97,8 +98,48 @@ main :: proc() {
         // Move enemies
         for i in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, i) or_continue
-            to_player := linalg.normalize((player.pos + player.dim/2) - (e.pos + e.dim/2))
-            e.pos += e.move_speed * to_player * TICK_TIME
+            to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
+            // apply acceleration towards player
+            e.velocity += to_player * 200 * TICK_TIME
+            if linalg.dot(e.velocity, to_player) > 0 && linalg.length(e.velocity) > e.max_move_speed {
+                e.velocity = linalg.normalize(e.velocity) * e.max_move_speed
+            }
+            e.pos += e.velocity * TICK_TIME
+        }
+
+
+        // Resolve enemy collisions
+        collisions_remaining := true
+        max_iterations := 2
+        iterations := 0
+        for collisions_remaining && iterations < max_iterations {
+            collisions_remaining = false
+            iterations += 1
+            for i in 0..<len(enemies.slots) {
+                e0, _ := pool_index_get(enemies, i) or_continue
+                for j in (i+1)..<len(enemies.slots) {
+                    e1, _ := pool_index_get(enemies, j) or_continue
+
+                    e1_to_e0 := get_center(e0.pos, e0.dim) - get_center(e1.pos, e1.dim)
+                    distance := linalg.length(e1_to_e0)
+
+                    // temporarily use the width of an enemy's rectangle as a radius
+                    overlap := (e0.dim.x/2 + e1.dim.x/2) - distance
+                    if overlap > 0 {
+                        // avoid zero division
+                        if distance == 0 {
+                            distance = 0.01
+                        }
+
+                        push_e0 := linalg.normalize(e1_to_e0) * overlap / 2
+                        push_e1 := -push_e0
+                        e0.pos += push_e0
+                        e1.pos += push_e1
+
+                        collisions_remaining = true
+                    }
+                }
+            }
         }
 
         // Damage enemies
@@ -124,7 +165,12 @@ main :: proc() {
                         }
                     }
                     if !was_in_zone_prev_tick {
+                        // apply damage
                         e.health -= dz.damage
+                        // apply knockback
+                        // TODO: should knockback be applied right here?
+                        away_from_player := -linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
+                        e.velocity = away_from_player * 100
                     }
                 }
             }
@@ -195,6 +241,10 @@ to_rec :: proc(pos: [2]f32, dim: [2]f32) -> rl.Rectangle {
     return {pos.x, pos.y, dim.x, dim.y}
 }
 
+get_center :: proc(corner: [2]f32, dim: [2]f32) -> [2]f32 {
+    return corner + dim/2
+}
+
 random_unit_vec :: proc() -> [2]f32 {
     for {
         v := [2]f32{rand.float32_range(-1,1), rand.float32_range(-1,1)}
@@ -223,7 +273,8 @@ Player :: struct {
 Entity :: struct {
     pos: [2]f32,
     dim: [2]f32,
-    move_speed: f32,
+    velocity: [2]f32,
+    max_move_speed: f32,
     health: f32,
     damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone))
 }
@@ -353,7 +404,7 @@ BIBLES_LIFETIME :: 500
 BIBLES_COOLDOWN :: 200
 BIBLES_REVOLUTIONS :: 3
 BIBLES_RADIUS :: 200
-BIBLES_DAMAGE :: 100
+BIBLES_DAMAGE :: 50
 
 make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     bibles: [3]Pool_Handle(Damage_Zone)
@@ -392,16 +443,16 @@ Magic_Wand_Projectile :: struct {
 }
 
 MAGIC_WAND_COOLDOWN :: 200
-MAGIC_WAND_DAMAGE :: 100
-MAGIC_WAND_MAX_PROJECTILES :: 10
+MAGIC_WAND_DAMAGE :: 30
+MAGIC_WAND_MAX_PROJECTILES :: 1000
 MAGIC_WAND_PROJECTILE_LIFETIME :: 300
-MAGIC_WAND_PROJECTILE_SPEED :: 100
+MAGIC_WAND_PROJECTILE_SPEED :: 300
 
 make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
-    result.num_projectiles_to_fire = 3
+    result.num_projectiles_to_fire = 100
     return result
 }
 
