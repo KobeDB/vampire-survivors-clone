@@ -8,7 +8,7 @@ Pool :: struct($T: typeid) {
     generations: []u64,
 }
 
-Pool_Handle :: struct {
+Pool_Handle :: struct($T: typeid) {
     index: int,
     generation: u64,
 }
@@ -25,7 +25,7 @@ pool_init :: proc(pool: ^Pool($T), num_slots: int) {
     }
 }
 
-pool_add :: proc(pool: ^Pool($T), value: T) -> Pool_Handle {
+pool_add :: proc(pool: ^Pool($T), value: T) -> Pool_Handle(T) {
     index, ok := pool_pop_free_index(pool)
     if !ok {
         // TODO: do something else than crashing the program
@@ -47,7 +47,7 @@ pool_pop_free_index :: proc(pool: ^Pool($T)) -> (int, bool) {
 }
 
 // TODO: maybe we shouldn't crash on an invalid handle but it'll do the job for now
-crash_on_invalid_handle :: proc(pool: Pool($T), handle: Pool_Handle) {
+crash_on_invalid_handle :: proc(pool: Pool($T), handle: Pool_Handle(T)) {
     // TODO: maybe this shouldn't be checked?
     if handle.index < 0 || handle.index >= len(pool.slots) {
         panic("pool_get: given handle's index is out of range")
@@ -67,7 +67,7 @@ crash_on_invalid_handle :: proc(pool: Pool($T), handle: Pool_Handle) {
     }
 }
 
-pool_get :: proc(pool: Pool($T), handle: Pool_Handle) -> ^T {
+pool_get :: proc(pool: Pool($T), handle: Pool_Handle(T)) -> ^T {
     crash_on_invalid_handle(pool, handle)
     return &pool.slots[handle.index]
 }
@@ -79,7 +79,7 @@ pool_index_get :: proc(pool: Pool($T), index: int) -> (val:^T, gen:u64, success:
     return &pool.slots[index], pool.generations[index], true
 }
 
-pool_free :: proc(pool: ^Pool($T), handle: Pool_Handle) {
+pool_free :: proc(pool: ^Pool($T), handle: Pool_Handle(T)) {
     crash_on_invalid_handle(pool^, handle)
     pool_index_free(pool, handle.index)
 }

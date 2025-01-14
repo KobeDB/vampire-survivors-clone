@@ -147,7 +147,7 @@ main :: proc() {
                 dz, gen := pool_index_get(damage_zones, dzi) or_continue
                 in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
                 if in_zone {
-                    zone_handle := Pool_Handle{dzi, gen}
+                    zone_handle := Pool_Handle(Damage_Zone){dzi, gen}
                     sa.append(&damage_zones_cur_tick, zone_handle)
                     was_in_zone_prev_tick := false
                     for dz_prev_tick in sa.slice(&e.damage_zones_prev_tick) {
@@ -216,7 +216,7 @@ main :: proc() {
 
         rl.EndMode2D()
 
-        rl.DrawText("BOI", 50, 50, 50, rl.GREEN)
+        rl.DrawText("BOI2", 50, 50, 50, rl.GREEN)
         rl.DrawFPS(0,0)
 
         rl.EndDrawing()
@@ -240,7 +240,11 @@ Entity :: struct {
     dim: [2]f32,
     move_speed: f32,
     health: f32,
-    damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle)
+    damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone))
+}
+
+Bibles :: struct {
+    bibles: [3]Pool_Handle(Damage_Zone)
 }
 
 Damage_Zone :: struct {
