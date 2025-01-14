@@ -49,18 +49,9 @@ pool_pop_free_index :: proc(pool: ^Pool($T)) -> (int, bool) {
 // TODO: maybe we shouldn't crash on an invalid handle but it'll do the job for now
 crash_on_invalid_handle :: proc(pool: Pool($T), handle: Pool_Handle(T)) {
     // TODO: maybe this shouldn't be checked?
-    if handle.index < 0 || handle.index >= len(pool.slots) {
-        panic("pool_get: given handle's index is out of range")
-    }
-
-    found_in_free_stack := false
-    for i in pool.free_stack_top..<len(pool.free_stack) {
-        found_in_free_stack |= (pool.free_stack[i] == handle.index)
-    }
-
-    if found_in_free_stack {
-        panic("pool_get: given handle points to freed slot")
-    }
+    // if handle.index < 0 || handle.index >= len(pool.slots) {
+    //     panic("pool_get: given handle's index is out of range")
+    // }
 
     if handle.generation != pool.generations[handle.index] {
         panic("invalid handle: handle's generation doesn't match slot's generation")

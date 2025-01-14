@@ -9,21 +9,23 @@ import "core:math/rand"
 import sa "core:container/small_array"
 import "core:math"
 
+TICK_TIME :: 1.0/60.0
+
 main :: proc() {
     fmt.println("Hello there")
 
     SCREEN_DIM :: [2]f32{1270, 720}
-    TICK_TIME :: 1.0/60.0
 
     rl.InitWindow(i32(SCREEN_DIM.x), i32(SCREEN_DIM.y) , "The window")
     rl.SetTargetFPS(1.0/TICK_TIME)
 
-    player_pos := [2]f32{10,10}
-    player_dim := [2]f32{50,50}
-    player_move_speed := f32(100)
-    player_facing_dir := [2]f32{1,0}
+    player: Player
+    player.pos = [2]f32{10,10}
+    player.dim = [2]f32{50,50}
+    player.move_speed = f32(100)
+    player.facing_dir = [2]f32{1,0}
 
-    MAX_ENEMIES :: 100000
+    MAX_ENEMIES :: 100
     enemies: Pool(Entity)
     pool_init(&enemies, MAX_ENEMIES)
 
@@ -37,12 +39,20 @@ main :: proc() {
         pool_add(&enemies, e)
     }
 
-    MAX_DAMAGE_ZONES :: 100
+    MAX_DAMAGE_ZONES :: 500
     damage_zones: Pool(Damage_Zone)
     pool_init(&damage_zones, MAX_DAMAGE_ZONES)
 
+    MAX_WEAPONS :: 10
+    weapons: Pool(Weapon)
+    pool_init(&weapons, MAX_WEAPONS)
+
+    pool_add(&weapons, make_whip(&damage_zones))
+    pool_add(&weapons, make_bibles(&damage_zones))
+    pool_add(&weapons, make_magic_wand(&damage_zones))
+
     camera: rl.Camera2D
-    camera.target = {player_pos.x + player_dim.x/2 , player_pos.y + player_dim.y/2}
+    camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
     camera.offset = {SCREEN_DIM.x / 2, SCREEN_DIM.y / 2}
     camera.zoom = 1
 
@@ -57,11 +67,11 @@ main :: proc() {
         move_dir: [2]f32
         if rl.IsKeyDown(.D) {
             move_dir.x += 1
-            player_facing_dir = {1,0}
+            player.facing_dir = {1,0}
         }
         if rl.IsKeyDown(.A) {
             move_dir.x -= 1
-            player_facing_dir = {-1,0}
+            player.facing_dir = {-1,0}
         }
         if rl.IsKeyDown(.S) {
             move_dir.y += 1
@@ -72,66 +82,22 @@ main :: proc() {
         if move_dir != 0 {
             move_dir = linalg.normalize(move_dir)
         }
-        player_pos += player_move_speed * move_dir * TICK_TIME
+        player.pos += player.move_speed * move_dir * TICK_TIME
 
         // Update camera target to follow player
-        camera.target = {player_pos.x + player_dim.x/2 , player_pos.y + player_dim.y/2}
+        camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
 
-        // Update damage zones
+        // Update weapons
         // ----------------------
-
-        // decrement lifetimes of damage zones
-        for i in 0..<len(damage_zones.slots) {
-            dz, _ := pool_index_get(damage_zones, i) or_continue
-            dz.lifetime_ticks -= 1
-            if dz.lifetime_ticks <= 0 {
-                pool_index_free(&damage_zones, i)
-            }
-        }
-
-        // update movement of damage zones
-        for i in 0..<len(damage_zones.slots) {
-            dz, _ := pool_index_get(damage_zones, i) or_continue
-            if dz.movement == .Bible {
-                dz.pos = calc_bible_center_pos(dz.id, player_pos, 3, u64(dz.lifetime_ticks))
-            }
-        }
-
-        if ticks % 200 == 0 {
-            // spawn damage zone
-            dz: Damage_Zone
-            dz.dim = {200,100}
-            dz.pos = player_pos + player_dim/2
-            if player_facing_dir.x < 0 {
-                dz.pos.x -= dz.dim.x
-            }
-            dz.lifetime_ticks = 100
-            dz.damage = 50
-            dz.color = rl.PINK
-            pool_add(&damage_zones, dz)
-        }
-
-        if ticks % (BIBLES_LIFETIME+BIBLES_COOLDOWN) == 0 {
-            // spawn bibles
-            num_bibles := 3
-            for i in 0..<num_bibles {
-                bible: Damage_Zone
-                bible.dim = {50,75}
-                // TODO: calculate corner pos of bible
-                bible.pos = calc_bible_center_pos(i, player_pos, num_bibles, BIBLES_LIFETIME)
-                bible.movement = .Bible
-                bible.damage = BIBLES_DAMAGE
-                bible.lifetime_ticks = BIBLES_LIFETIME
-                bible.color = rl.BLUE
-                bible.id = i
-                pool_add(&damage_zones, bible)
-            }
+        for wi in 0..<len(weapons.slots) {
+            weapon, _ := pool_index_get(weapons, wi) or_continue
+            weapon_tick(weapon, player, &damage_zones)
         }
 
         // Move enemies
         for i in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, i) or_continue
-            to_player := linalg.normalize((player_pos + player_dim/2) - (e.pos + e.dim/2))
+            to_player := linalg.normalize((player.pos + player.dim/2) - (e.pos + e.dim/2))
             e.pos += e.move_speed * to_player * TICK_TIME
         }
 
@@ -145,6 +111,7 @@ main :: proc() {
 
             for dzi in 0..<len(damage_zones.slots) {
                 dz, gen := pool_index_get(damage_zones, dzi) or_continue
+                if !dz.is_active { continue }
                 in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
                 if in_zone {
                     zone_handle := Pool_Handle(Damage_Zone){dzi, gen}
@@ -193,18 +160,19 @@ main :: proc() {
             rl.DrawRectangleRec(to_rec({0,10}, {5,5}), rl.GREEN)
 
             // Draw player
-            rl.DrawRectangleRec(to_rec(player_pos, player_dim), rl.MAGENTA)
+            rl.DrawRectangleRec(to_rec(player.pos, player.dim), rl.MAGENTA)
 
             // Draw damage zones
             for i in 0..<len(damage_zones.slots) {
                 dz, _ := pool_index_get(damage_zones, i) or_continue
+                if !dz.is_active { continue }
                 rl.DrawRectangleRec(to_rec(dz.pos,dz.dim), dz.color)
             }
 
             // Draw test rectangle
             rect_pos := [2]f32{70,70}
             rect_dim := [2]f32{100,20}
-            overlap := aabb_collision_check(player_pos, player_dim, rect_pos, rect_dim)
+            overlap := aabb_collision_check(player.pos, player.dim, rect_pos, rect_dim)
             rect_color := rl.RED if overlap else rl.GREEN
             rl.DrawRectangleRec(to_rec(rect_pos, rect_dim), rect_color)
 
@@ -227,12 +195,29 @@ to_rec :: proc(pos: [2]f32, dim: [2]f32) -> rl.Rectangle {
     return {pos.x, pos.y, dim.x, dim.y}
 }
 
+random_unit_vec :: proc() -> [2]f32 {
+    for {
+        v := [2]f32{rand.float32_range(-1,1), rand.float32_range(-1,1)}
+        v_len := linalg.length(v)
+        if v_len <= 1 && 0.0001 < v_len {
+            return linalg.normalize(v)
+        }
+    }
+}
+
 aabb_collision_check :: proc(pos0: [2]f32, dim0: [2]f32, pos1: [2]f32, dim1: [2]f32) -> bool {
     return ((pos0.x <= pos1.x+dim1.x && pos0.x >= pos1.x) \
             || (pos1.x <= pos0.x+dim0.x && pos1.x >= pos0.x)) \
            && \
            ((pos0.y <= pos1.y+dim1.y && pos0.y >= pos1.y) \
             || (pos1.y <= pos0.y+dim0.y && pos1.y >= pos0.y))
+}
+
+Player :: struct {
+    pos: [2]f32,
+    dim: [2]f32,
+    move_speed: f32,
+    facing_dir: [2]f32,
 }
 
 Entity :: struct {
@@ -243,32 +228,148 @@ Entity :: struct {
     damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone))
 }
 
+
+Weapon :: union {
+    Whip,
+    Bibles,
+    Magic_Wand,
+}
+
+weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone)) {
+    switch &w in weapon {
+
+        case Whip: {
+            w.remaining_ticks -= 1
+            if w.remaining_ticks <= 0 {
+                dz := pool_get(damage_zones^, w.dz)
+                if w.is_cooling_down {
+                    // was cooling down, going to attack
+                    w.remaining_ticks = WHIP_LIFETIME
+                    dz.is_active = true
+                    dz.pos = player.pos + player.dim/2
+                    if player.facing_dir.x < 0 {
+                        dz.pos.x -= dz.dim.x
+                    }
+                }
+                else {
+                    // was attacking, going to cooldown
+                    w.remaining_ticks = WHIP_COOLDOWN
+                    dz.is_active = false
+                }
+                w.is_cooling_down = !w.is_cooling_down // flip state
+            }
+        }
+
+        case Bibles: {
+            w.remaining_ticks -= 1
+            if w.remaining_ticks <= 0 {
+                for i in 0..<len(w.bibles) {
+                    bible_handle := w.bibles[i]
+                    bible := pool_get(damage_zones^, bible_handle)
+                    bible.is_active = w.is_cooling_down
+                }
+                w.remaining_ticks = BIBLES_LIFETIME if w.is_cooling_down else BIBLES_COOLDOWN
+                w.is_cooling_down = !w.is_cooling_down // flip state
+            }
+
+            for i in 0..<len(w.bibles) {
+                bible_handle := w.bibles[i]
+                bible := pool_get(damage_zones^, bible_handle)
+                bible.pos = calc_bible_center_pos(i, player.pos, len(w.bibles), w.remaining_ticks)
+            }
+        }
+
+        case Magic_Wand: {
+            // tick the projectiles
+            for pi in 0..<len(w.projectiles.slots) {
+                projectile, _ := pool_index_get(w.projectiles, pi) or_continue
+                projectile.lifetime -= 1
+                // free expired projectiles
+                if projectile.lifetime <= 0 {
+                    // first free the projectile's Damage_Zone
+                    pool_free(damage_zones, projectile.dz)
+                    // free the projectile itself
+                    pool_index_free(&w.projectiles, pi)
+                }
+                else {
+                    // Update projectile's movement
+                    dz := pool_get(damage_zones^, projectile.dz)
+                    dz.pos += projectile.velocity * TICK_TIME
+                }
+            }
+
+            w.remaining_ticks -= 1
+            if w.remaining_ticks <= 0 {
+                for i in 0..<w.num_projectiles_to_fire {
+                    dz: Damage_Zone
+                    dz.pos = player.pos
+                    dz.dim = {20,20}
+                    dz.damage = MAGIC_WAND_DAMAGE
+                    dz.color = rl.SKYBLUE
+                    dz.is_active = true
+                    dz_handle := pool_add(damage_zones, dz)
+
+                    projectile: Magic_Wand_Projectile
+                    projectile.dz = dz_handle
+                    projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
+                    // TODO: Shoot at nearest enemy instead of random direction
+                    projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
+
+                    pool_add(&w.projectiles, projectile)
+                }
+                w.remaining_ticks = MAGIC_WAND_COOLDOWN
+            }
+
+        }
+    }
+}
+
+Whip :: struct {
+    dz: Pool_Handle(Damage_Zone),
+    remaining_ticks: int,
+    is_cooling_down: bool, // if false => executing attack
+}
+
+WHIP_COOLDOWN :: 100
+WHIP_LIFETIME :: 1
+
+make_whip :: proc(damage_zones: ^Pool(Damage_Zone)) -> Whip {
+    dz: Damage_Zone
+    dz.dim = {200,100}
+    dz.damage = 50
+    dz.color = rl.PINK
+    dz.is_active = false
+    dz_handle := pool_add(damage_zones, dz)
+    return {dz_handle, WHIP_COOLDOWN, true}
+}
+
 Bibles :: struct {
-    bibles: [3]Pool_Handle(Damage_Zone)
+    bibles: [3]Pool_Handle(Damage_Zone),
+    remaining_ticks: int,
+    is_cooling_down: bool, // if false => executing attack
 }
 
-Damage_Zone :: struct {
-    pos: [2]f32,
-    dim: [2]f32,
-    damage: f32,
-    lifetime_ticks: int,
-    color: rl.Color,
-    movement: Damage_Zone_Movement,
-    id: int, // e.g. used to identify which bible this zone represents
-}
-
-Damage_Zone_Movement :: enum {
-    Static = 0,
-    Bible,
-}
-
-BIBLES_LIFETIME :: 1000
+BIBLES_LIFETIME :: 500
 BIBLES_COOLDOWN :: 200
-BIBLES_REVOLUTIONS :: 5
+BIBLES_REVOLUTIONS :: 3
 BIBLES_RADIUS :: 200
 BIBLES_DAMAGE :: 100
 
-calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int, remaining_lifetime: u64) -> [2]f32 {
+make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
+    bibles: [3]Pool_Handle(Damage_Zone)
+    for i in 0..<len(bibles) {
+        bible: Damage_Zone
+        bible.dim = {50,75}
+        bible.damage = BIBLES_DAMAGE
+        bible.color = rl.BLUE
+        bible.is_active = false
+        bible_handle := pool_add(damage_zones, bible)
+        bibles[i] = bible_handle
+    }
+    return {bibles, BIBLES_COOLDOWN, true}
+}
+
+calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int, remaining_lifetime: int) -> [2]f32 {
     angle_between_bibles := 2*math.PI/f32(num_bibles)
     animation_progress := f32(BIBLES_LIFETIME-remaining_lifetime) / f32(BIBLES_LIFETIME)
     angle_offset := (BIBLES_REVOLUTIONS * 2*math.PI) * animation_progress
@@ -277,3 +378,38 @@ calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int,
     bible_center := bible_center_on_unit_circle * BIBLES_RADIUS + orbit_center
     return bible_center
 }
+
+Magic_Wand :: struct {
+    projectiles: Pool(Magic_Wand_Projectile),
+    remaining_ticks: int, // remaining ticks until shooting new projectiles
+    num_projectiles_to_fire: int,
+}
+
+Magic_Wand_Projectile :: struct {
+    dz: Pool_Handle(Damage_Zone),
+    lifetime: int,
+    velocity: [2]f32,
+}
+
+MAGIC_WAND_COOLDOWN :: 200
+MAGIC_WAND_DAMAGE :: 100
+MAGIC_WAND_MAX_PROJECTILES :: 10
+MAGIC_WAND_PROJECTILE_LIFETIME :: 300
+MAGIC_WAND_PROJECTILE_SPEED :: 100
+
+make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
+    result: Magic_Wand
+    pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
+    result.remaining_ticks = MAGIC_WAND_COOLDOWN
+    result.num_projectiles_to_fire = 3
+    return result
+}
+
+Damage_Zone :: struct {
+    pos: [2]f32,
+    dim: [2]f32,
+    damage: f32,
+    is_active: bool,
+    color: rl.Color,
+}
+
