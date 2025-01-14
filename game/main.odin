@@ -17,6 +17,11 @@ main :: proc() {
     SCREEN_DIM :: [2]f32{1270, 720}
 
     rl.InitWindow(i32(SCREEN_DIM.x), i32(SCREEN_DIM.y) , "The window")
+    rl.InitAudioDevice()
+
+    music := rl.LoadMusicStream("res/sounds/vampire_jam.mp3")
+    rl.PlayMusicStream(music)
+
     rl.SetTargetFPS(1.0/TICK_TIME)
 
     player: Player
@@ -25,7 +30,7 @@ main :: proc() {
     player.move_speed = f32(100)
     player.facing_dir = [2]f32{1,0}
 
-    MAX_ENEMIES :: 100
+    MAX_ENEMIES :: 1000
     enemies: Pool(Entity)
     pool_init(&enemies, MAX_ENEMIES)
 
@@ -207,12 +212,16 @@ main :: proc() {
             }
         }
 
+        // Update music
+        // ------------------
+        rl.UpdateMusicStream(music)
+
 
         // Draw
         // ---------------
         rl.BeginDrawing()
 
-        rl.ClearBackground(rl.LIGHTGRAY)
+        rl.ClearBackground(rl.GRAY)
 
 
         rl.BeginMode2D(camera)
@@ -248,19 +257,19 @@ main :: proc() {
             //Draw enemies
             for i in 0..<len(enemies.slots) {
                 e, _ := pool_index_get(enemies, i) or_continue
-                rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.RED)
+                rl.DrawRectangleRec(to_rec(e.pos, e.dim+{2,2}), rl.BLACK)
+                rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.MAROON)
             }
 
             // Draw damage indicators
             for i in 0..<len(damage_indicators.slots) {
                 indicator, _ := pool_index_get(damage_indicators, i) or_continue
-                rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
                 rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 22, rl.BLACK)
+                rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
             }
 
         rl.EndMode2D()
 
-        rl.DrawText("BOI2", 50, 50, 50, rl.GREEN)
         rl.DrawFPS(0,0)
 
         rl.EndDrawing()
@@ -474,7 +483,7 @@ Magic_Wand_Projectile :: struct {
 
 MAGIC_WAND_COOLDOWN :: 200
 MAGIC_WAND_DAMAGE :: 30
-MAGIC_WAND_MAX_PROJECTILES :: 100
+MAGIC_WAND_MAX_PROJECTILES :: 1000
 MAGIC_WAND_PROJECTILE_LIFETIME :: 300
 MAGIC_WAND_PROJECTILE_SPEED :: 300
 
@@ -482,7 +491,7 @@ make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
-    result.num_projectiles_to_fire = 1
+    result.num_projectiles_to_fire = 25
     return result
 }
 
