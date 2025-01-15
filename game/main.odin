@@ -199,6 +199,9 @@ main :: proc() {
 
                         // create damage indicator
                         pool_add(&damage_indicators, Damage_Indicator{ damage=int(dz.damage), pos=e.pos, remaining_display_time=DAMAGE_INDICATOR_DISPLAY_TIME})
+
+                        // register hit in damage zone
+                        dz.enemy_hit_count += 1
                     }
                 }
             }
@@ -373,9 +376,10 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
             // tick the projectiles
             for pi in 0..<len(w.projectiles.slots) {
                 projectile, _ := pool_index_get(w.projectiles, pi) or_continue
+                dz := pool_get(damage_zones^, projectile.dz)
                 projectile.lifetime -= 1
-                // free expired projectiles
-                if projectile.lifetime <= 0 {
+                // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
+                if projectile.lifetime <= 0 || dz.enemy_hit_count >= projectile.health {
                     // first free the projectile's Damage_Zone
                     pool_free(damage_zones, projectile.dz)
                     // free the projectile itself
@@ -383,7 +387,6 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
                 }
                 else {
                     // Update projectile's movement
-                    dz := pool_get(damage_zones^, projectile.dz)
                     dz.pos += projectile.velocity * TICK_TIME
                 }
             }
@@ -402,6 +405,7 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
                     projectile: Magic_Wand_Projectile
                     projectile.dz = dz_handle
                     projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
+                    projectile.health = 1
                     // TODO: Shoot at nearest enemy instead of random direction
                     projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
 
@@ -479,6 +483,7 @@ Magic_Wand_Projectile :: struct {
     dz: Pool_Handle(Damage_Zone),
     lifetime: int,
     velocity: [2]f32,
+    health: int, // The maximum amount of enemies that can be hit by this projectile
 }
 
 MAGIC_WAND_COOLDOWN :: 200
@@ -486,12 +491,13 @@ MAGIC_WAND_DAMAGE :: 30
 MAGIC_WAND_MAX_PROJECTILES :: 1000
 MAGIC_WAND_PROJECTILE_LIFETIME :: 300
 MAGIC_WAND_PROJECTILE_SPEED :: 300
+MAGIC_WAND_DEFAULT_NUM_PROJECTILES :: 10
 
 make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
-    result.num_projectiles_to_fire = 25
+    result.num_projectiles_to_fire = MAGIC_WAND_DEFAULT_NUM_PROJECTILES
     return result
 }
 
@@ -501,5 +507,5 @@ Damage_Zone :: struct {
     damage: f32,
     is_active: bool,
     color: rl.Color,
+    enemy_hit_count: int,
 }
-
