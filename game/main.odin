@@ -14,7 +14,8 @@ TICK_TIME :: 1.0/60.0
 main :: proc() {
     fmt.println("Hello there")
 
-    SCREEN_DIM :: [2]f32{1270, 720}
+    //SCREEN_DIM :: [2]f32{1270, 720}
+    SCREEN_DIM :: [2]f32{1600, 900}
 
     rl.InitWindow(i32(SCREEN_DIM.x), i32(SCREEN_DIM.y) , "The window")
     rl.InitAudioDevice()
@@ -66,6 +67,17 @@ main :: proc() {
     DAMAGE_INDICATOR_DISPLAY_TIME :: 50
     damage_indicators: Pool(Damage_Indicator)
     pool_init(&damage_indicators, MAX_DAMAGE_INDICATORS)
+
+    XP_Drop :: struct {
+        using entity: Entity,
+        xp: int,
+    }
+    XP_DROP_DIM :: [2]f32{10,15}
+    XP_DROP_ACCEL :: 1000
+    XP_PICKUP_RANGE :: 200
+    MAX_XP_DROPS :: 10000
+    xp_drops: Pool(XP_Drop)
+    pool_init(&xp_drops, MAX_XP_DROPS)
 
     camera: rl.Camera2D
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
@@ -223,11 +235,36 @@ main :: proc() {
             }
         }
 
-        // Free killed enemies
+        // Process enemy deaths
         for ei in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, ei) or_continue
             if e.health <= 0 {
+                // spawn XP drop
+                pool_add(&xp_drops, XP_Drop{xp=1, pos=e.pos})
+
+                // Free killed enemy
                 pool_index_free(&enemies, ei)
+            }
+        }
+
+        // Update xp drops
+        for i in 0..<len(xp_drops.slots) {
+            drop, _ := pool_index_get(xp_drops, i) or_continue
+            drop.pos += drop.velocity * TICK_TIME
+            // If player touches xp drop, pick it up
+            if aabb_collision_check(player.pos, player.dim, drop.pos, XP_DROP_DIM) {
+                player.experience += drop.xp
+                // delete xp drop
+                pool_index_free(&xp_drops, i)
+            }
+            else {
+                // If player is in proximity of xp drop, make xp drop accelerate towards player
+                player_center := get_center(player.pos, player.dim)
+                drop_center := get_center(drop.pos, drop.dim)
+                if linalg.length(player_center - drop_center) <= XP_PICKUP_RANGE {
+                    to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(drop.pos, drop.dim))
+                    drop.velocity += to_player * XP_DROP_ACCEL * TICK_TIME
+                }
             }
         }
 
@@ -259,6 +296,14 @@ main :: proc() {
             // Draw player
             rl.DrawRectangleRec(to_rec(player.pos, player.dim), rl.MAGENTA)
 
+            //Draw enemies
+            for i in 0..<len(enemies.slots) {
+                e, _ := pool_index_get(enemies, i) or_continue
+                border := [2]f32{3,3}
+                rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.BLACK)
+                rl.DrawRectangleRec(to_rec(e.pos + border, e.dim - 2 * border), rl.MAROON)
+            }
+
             // Draw damage zones
             for i in 0..<len(damage_zones.slots) {
                 dz, _ := pool_index_get(damage_zones, i) or_continue
@@ -266,20 +311,21 @@ main :: proc() {
                 rl.DrawRectangleRec(to_rec(dz.pos,dz.dim), dz.color)
             }
 
-            // Draw test rectangle
-            {
-            rect_pos := [2]f32{70,70}
-            rect_dim := [2]f32{100,20}
-            overlap := aabb_collision_check(player.pos, player.dim, rect_pos, rect_dim)
-            rect_color := rl.RED if overlap else rl.GREEN
-            rl.DrawRectangleRec(to_rec(rect_pos, rect_dim), rect_color)
-            }
+            // // Draw test rectangle
+            // {
+            // rect_pos := [2]f32{70,70}
+            // rect_dim := [2]f32{100,20}
+            // overlap := aabb_collision_check(player.pos, player.dim, rect_pos, rect_dim)
+            // rect_color := rl.RED if overlap else rl.GREEN
+            // rl.DrawRectangleRec(to_rec(rect_pos, rect_dim), rect_color)
+            // }
 
-            //Draw enemies
-            for i in 0..<len(enemies.slots) {
-                e, _ := pool_index_get(enemies, i) or_continue
-                rl.DrawRectangleRec(to_rec(e.pos, e.dim+{2,2}), rl.BLACK)
-                rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.MAROON)
+            // Draw XP drops
+            for i in 0..<len(xp_drops.slots) {
+                drop, _ := pool_index_get(xp_drops, i) or_continue
+                border := [2]f32{3,3}
+                rl.DrawRectangleRec(to_rec(drop.pos, XP_DROP_DIM), rl.BLACK)
+                rl.DrawRectangleRec(to_rec(drop.pos + border, XP_DROP_DIM - 2 * border), rl.SKYBLUE)
             }
 
             // Draw damage indicators
@@ -289,15 +335,12 @@ main :: proc() {
                 rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
             }
 
-            // Draw viewport borders
-            {
-            rect_color := rl.Color{ 255, 0, 255, 100 }
-            rl.DrawRectangleRec(to_rec(enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim), rect_color)
-            }
-
         rl.EndMode2D()
 
         rl.DrawFPS(0,0)
+
+        // Draw player's XP
+        rl.DrawText(rl.TextFormat("XP: %d", player.experience), rl.GetScreenWidth() - 100, 20, 22, rl.GREEN)
 
         rl.EndDrawing()
     }
@@ -334,6 +377,7 @@ Player :: struct {
     dim: [2]f32,
     move_speed: f32,
     facing_dir: [2]f32,
+    experience: int,
 }
 
 Entity :: struct {
@@ -471,7 +515,7 @@ BIBLES_LIFETIME :: 500
 BIBLES_COOLDOWN :: 200
 BIBLES_REVOLUTIONS :: 3
 BIBLES_RADIUS :: 200
-BIBLES_DAMAGE :: 20
+BIBLES_DAMAGE :: 80
 
 make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     bibles: [3]Pool_Handle(Damage_Zone)
