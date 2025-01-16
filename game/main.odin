@@ -30,12 +30,12 @@ main :: proc() {
     player.move_speed = f32(100)
     player.facing_dir = [2]f32{1,0}
 
-    MAX_ENEMIES :: 1000
+    MAX_ENEMIES :: 10000
     enemies: Pool(Entity)
     pool_init(&enemies, MAX_ENEMIES)
 
     for i in 0..<MAX_ENEMIES {
-        enemy_spread: f32 = MAX_ENEMIES * 10
+        enemy_spread: f32 = MAX_ENEMIES * 1
         pos := [2]f32{rand.float32_range(-enemy_spread,enemy_spread), rand.float32_range(-enemy_spread,enemy_spread)}
         e: Entity
         e.pos = pos
@@ -124,6 +124,8 @@ main :: proc() {
 
 
         // Resolve enemy collisions
+        enemy_enemy_collision_zone_pos := get_center(player.pos, player.dim) - camera.offset
+        enemy_enemy_collision_zone_dim := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
         collisions_remaining := true
         max_iterations := 2
         iterations := 0
@@ -132,8 +134,17 @@ main :: proc() {
             iterations += 1
             for i in 0..<len(enemies.slots) {
                 e0, _ := pool_index_get(enemies, i) or_continue
+
+                // If enemy is not in view (+ some margin), then don't bother resolving collisions
+                if !aabb_collision_check(e0.pos, e0.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
+                    continue
+                }
+
                 for j in (i+1)..<len(enemies.slots) {
                     e1, _ := pool_index_get(enemies, j) or_continue
+
+                    // We don't check if e1 is in the collision zone because we already do a (simple)
+                    // collision check here anyway and so we wouldn't save any time by skipping!
 
                     e1_to_e0 := get_center(e0.pos, e0.dim) - get_center(e1.pos, e1.dim)
                     distance := linalg.length(e1_to_e0)
@@ -169,6 +180,11 @@ main :: proc() {
         // Damage enemies
         for ei in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, ei) or_continue
+
+            // TODO: use bigger collision zone boundaries than enemy-enemy collsion zone
+            if !aabb_collision_check(e.pos, e.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
+                continue
+            }
 
             damage_zones_cur_tick := e.damage_zones_prev_tick
             damage_zones_cur_tick = {} // reset array
@@ -251,11 +267,13 @@ main :: proc() {
             }
 
             // Draw test rectangle
+            {
             rect_pos := [2]f32{70,70}
             rect_dim := [2]f32{100,20}
             overlap := aabb_collision_check(player.pos, player.dim, rect_pos, rect_dim)
             rect_color := rl.RED if overlap else rl.GREEN
             rl.DrawRectangleRec(to_rec(rect_pos, rect_dim), rect_color)
+            }
 
             //Draw enemies
             for i in 0..<len(enemies.slots) {
@@ -269,6 +287,12 @@ main :: proc() {
                 indicator, _ := pool_index_get(damage_indicators, i) or_continue
                 rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 22, rl.BLACK)
                 rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
+            }
+
+            // Draw viewport borders
+            {
+            rect_color := rl.Color{ 255, 0, 255, 100 }
+            rl.DrawRectangleRec(to_rec(enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim), rect_color)
             }
 
         rl.EndMode2D()
