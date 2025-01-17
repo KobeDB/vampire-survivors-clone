@@ -26,10 +26,7 @@ main :: proc() {
     rl.SetTargetFPS(1.0/TICK_TIME)
 
     player: Player
-    player.pos = [2]f32{10,10}
-    player.dim = [2]f32{50,50}
-    player.move_speed = f32(100)
-    player.facing_dir = [2]f32{1,0}
+    player_init(&player)
 
     MAX_ENEMIES :: 10000
     enemies: Pool(Entity)
@@ -79,6 +76,23 @@ main :: proc() {
     xp_drops: Pool(XP_Drop)
     pool_init(&xp_drops, MAX_XP_DROPS)
 
+    Game_State :: enum {
+        IN_GAME,
+        LEVEL_UP_ENTRY,
+        LEVEL_UP,
+    }
+
+    game_state := Game_State.IN_GAME
+
+    Level_Up_Screen :: struct {
+        pos: [2]f32,
+        dim: [2]f32,
+    }
+    level_up_screen: Level_Up_Screen
+    level_up_screen.dim = { 0.8 * f32(rl.GetScreenWidth()), 0.8 * f32(rl.GetScreenHeight())}
+    level_up_entry_progress: int
+    LEVEL_UP_ENTRY_DURATION :: 30 // also in ticks
+
     camera: rl.Camera2D
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
     camera.offset = {SCREEN_DIM.x / 2, SCREEN_DIM.y / 2}
@@ -92,180 +106,230 @@ main :: proc() {
         // ---------------
         defer ticks += 1
 
-        move_dir: [2]f32
-        if rl.IsKeyDown(.D) {
-            move_dir.x += 1
-            player.facing_dir = {1,0}
-        }
-        if rl.IsKeyDown(.A) {
-            move_dir.x -= 1
-            player.facing_dir = {-1,0}
-        }
-        if rl.IsKeyDown(.S) {
-            move_dir.y += 1
-        }
-        if rl.IsKeyDown(.W) {
-            move_dir.y -= 1
-        }
-        if move_dir != 0 {
-            move_dir = linalg.normalize(move_dir)
-        }
-        player.pos += player.move_speed * move_dir * TICK_TIME
-
-        // Update camera target to follow player
-        camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
-
-        // Update weapons
-        // ----------------------
-        for wi in 0..<len(weapons.slots) {
-            weapon, _ := pool_index_get(weapons, wi) or_continue
-            weapon_tick(weapon, player, &damage_zones)
-        }
-
-        // Move enemies
-        for i in 0..<len(enemies.slots) {
-            e, _ := pool_index_get(enemies, i) or_continue
-            to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
-            // apply acceleration towards player
-            e.velocity += to_player * 200 * TICK_TIME
-            if linalg.dot(e.velocity, to_player) > 0 && linalg.length(e.velocity) > e.max_move_speed {
-                e.velocity = linalg.normalize(e.velocity) * e.max_move_speed
+        if game_state == .LEVEL_UP_ENTRY {
+            progress := f32(level_up_entry_progress) / LEVEL_UP_ENTRY_DURATION
+            target_pos :: [2]f32{50,50}
+            start_pos := target_pos - [2]f32{0, level_up_screen.dim.y }
+            level_up_screen.pos = progress * target_pos + (1-progress) * start_pos
+            if level_up_entry_progress == LEVEL_UP_ENTRY_DURATION {
+                game_state = .LEVEL_UP
             }
-            e.pos += e.velocity * TICK_TIME
+            level_up_entry_progress += 1
         }
+        else if game_state == .LEVEL_UP {
+            if rl.IsKeyDown(.L) {
+                player.cur_level += 1
+                if player.cur_level < player.target_level {
+                    level_up_entry_progress = 0
+                    game_state = .LEVEL_UP_ENTRY
+                }
+                else {
+                    game_state = .IN_GAME
+                }
+            }
+        }
+        else if game_state == .IN_GAME {
 
+            move_dir: [2]f32
+            if rl.IsKeyDown(.D) {
+                move_dir.x += 1
+                player.facing_dir = {1,0}
+            }
+            if rl.IsKeyDown(.A) {
+                move_dir.x -= 1
+                player.facing_dir = {-1,0}
+            }
+            if rl.IsKeyDown(.S) {
+                move_dir.y += 1
+            }
+            if rl.IsKeyDown(.W) {
+                move_dir.y -= 1
+            }
+            if move_dir != 0 {
+                move_dir = linalg.normalize(move_dir)
+            }
+            player.pos += player.move_speed * move_dir * TICK_TIME
 
-        // Resolve enemy collisions
-        enemy_enemy_collision_zone_pos := get_center(player.pos, player.dim) - camera.offset
-        enemy_enemy_collision_zone_dim := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
-        collisions_remaining := true
-        max_iterations := 2
-        iterations := 0
-        for collisions_remaining && iterations < max_iterations {
-            collisions_remaining = false
-            iterations += 1
+            // Update camera target to follow player
+            camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
+
+            // Update weapons
+            // ----------------------
+            for wi in 0..<len(weapons.slots) {
+                weapon, _ := pool_index_get(weapons, wi) or_continue
+                weapon_tick(weapon, player, &damage_zones)
+            }
+
+            // Move enemies
             for i in 0..<len(enemies.slots) {
-                e0, _ := pool_index_get(enemies, i) or_continue
+                e, _ := pool_index_get(enemies, i) or_continue
+                to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
+                // apply acceleration towards player
+                e.velocity += to_player * 200 * TICK_TIME
+                if linalg.dot(e.velocity, to_player) > 0 && linalg.length(e.velocity) > e.max_move_speed {
+                    e.velocity = linalg.normalize(e.velocity) * e.max_move_speed
+                }
+                e.pos += e.velocity * TICK_TIME
+            }
 
-                // If enemy is not in view (+ some margin), then don't bother resolving collisions
-                if !aabb_collision_check(e0.pos, e0.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
+
+            // Resolve enemy collisions
+            enemy_enemy_collision_zone_pos := get_center(player.pos, player.dim) - camera.offset
+            enemy_enemy_collision_zone_dim := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
+            collisions_remaining := true
+            max_iterations := 2
+            iterations := 0
+            for collisions_remaining && iterations < max_iterations {
+                collisions_remaining = false
+                iterations += 1
+                for i in 0..<len(enemies.slots) {
+                    e0, _ := pool_index_get(enemies, i) or_continue
+
+                    // If enemy is not in view (+ some margin), then don't bother resolving collisions
+                    if !aabb_collision_check(e0.pos, e0.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
+                        continue
+                    }
+
+                    for j in (i+1)..<len(enemies.slots) {
+                        e1, _ := pool_index_get(enemies, j) or_continue
+
+                        // We don't check if e1 is in the collision zone because we already do a (simple)
+                        // collision check here anyway and so we wouldn't save any time by skipping!
+
+                        e1_to_e0 := get_center(e0.pos, e0.dim) - get_center(e1.pos, e1.dim)
+                        distance := linalg.length(e1_to_e0)
+
+                        // temporarily use the width of an enemy's rectangle as a radius
+                        overlap := (e0.dim.x/2 + e1.dim.x/2) - distance
+                        if overlap > 0 {
+                            // avoid zero division
+                            if distance == 0 {
+                                distance = 0.01
+                            }
+
+                            push_e0 := linalg.normalize(e1_to_e0) * overlap / 2
+                            push_e1 := -push_e0
+                            e0.pos += push_e0
+                            e1.pos += push_e1
+
+                            collisions_remaining = true
+                        }
+                    }
+                }
+            }
+
+            // Update damage indicators
+            for i in 0..<len(damage_indicators.slots) {
+                indicator, _ := pool_index_get(damage_indicators, i) or_continue
+                indicator.remaining_display_time -= 1
+                if indicator.remaining_display_time <= 0 {
+                    pool_index_free(&damage_indicators, i)
+                }
+            }
+
+            // Damage enemies
+            for ei in 0..<len(enemies.slots) {
+                e, _ := pool_index_get(enemies, ei) or_continue
+
+                // TODO: use bigger collision zone boundaries than enemy-enemy collsion zone
+                if !aabb_collision_check(e.pos, e.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
                     continue
                 }
 
-                for j in (i+1)..<len(enemies.slots) {
-                    e1, _ := pool_index_get(enemies, j) or_continue
+                damage_zones_cur_tick := e.damage_zones_prev_tick
+                damage_zones_cur_tick = {} // reset array
+                defer e.damage_zones_prev_tick = damage_zones_cur_tick
 
-                    // We don't check if e1 is in the collision zone because we already do a (simple)
-                    // collision check here anyway and so we wouldn't save any time by skipping!
-
-                    e1_to_e0 := get_center(e0.pos, e0.dim) - get_center(e1.pos, e1.dim)
-                    distance := linalg.length(e1_to_e0)
-
-                    // temporarily use the width of an enemy's rectangle as a radius
-                    overlap := (e0.dim.x/2 + e1.dim.x/2) - distance
-                    if overlap > 0 {
-                        // avoid zero division
-                        if distance == 0 {
-                            distance = 0.01
+                for dzi in 0..<len(damage_zones.slots) {
+                    dz, gen := pool_index_get(damage_zones, dzi) or_continue
+                    if !dz.is_active { continue }
+                    in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
+                    if in_zone {
+                        zone_handle := Pool_Handle(Damage_Zone){dzi, gen}
+                        sa.append(&damage_zones_cur_tick, zone_handle)
+                        was_in_zone_prev_tick := false
+                        for dz_prev_tick in sa.slice(&e.damage_zones_prev_tick) {
+                            if dz_prev_tick == zone_handle {
+                                was_in_zone_prev_tick = true
+                                break
+                            }
                         }
+                        if !was_in_zone_prev_tick {
+                            // apply damage
+                            e.health -= dz.damage
 
-                        push_e0 := linalg.normalize(e1_to_e0) * overlap / 2
-                        push_e1 := -push_e0
-                        e0.pos += push_e0
-                        e1.pos += push_e1
+                            // apply knockback
+                            // TODO: should knockback be applied right here?
+                            away_from_player := -linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
+                            e.velocity = away_from_player * 100
 
-                        collisions_remaining = true
-                    }
-                }
-            }
-        }
+                            // create damage indicator
+                            pool_add(&damage_indicators, Damage_Indicator{ damage=int(dz.damage), pos=e.pos, remaining_display_time=DAMAGE_INDICATOR_DISPLAY_TIME})
 
-        // Update damage indicators
-        for i in 0..<len(damage_indicators.slots) {
-            indicator, _ := pool_index_get(damage_indicators, i) or_continue
-            indicator.remaining_display_time -= 1
-            if indicator.remaining_display_time <= 0 {
-                pool_index_free(&damage_indicators, i)
-            }
-        }
-
-        // Damage enemies
-        for ei in 0..<len(enemies.slots) {
-            e, _ := pool_index_get(enemies, ei) or_continue
-
-            // TODO: use bigger collision zone boundaries than enemy-enemy collsion zone
-            if !aabb_collision_check(e.pos, e.dim, enemy_enemy_collision_zone_pos, enemy_enemy_collision_zone_dim) {
-                continue
-            }
-
-            damage_zones_cur_tick := e.damage_zones_prev_tick
-            damage_zones_cur_tick = {} // reset array
-            defer e.damage_zones_prev_tick = damage_zones_cur_tick
-
-            for dzi in 0..<len(damage_zones.slots) {
-                dz, gen := pool_index_get(damage_zones, dzi) or_continue
-                if !dz.is_active { continue }
-                in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
-                if in_zone {
-                    zone_handle := Pool_Handle(Damage_Zone){dzi, gen}
-                    sa.append(&damage_zones_cur_tick, zone_handle)
-                    was_in_zone_prev_tick := false
-                    for dz_prev_tick in sa.slice(&e.damage_zones_prev_tick) {
-                        if dz_prev_tick == zone_handle {
-                            was_in_zone_prev_tick = true
-                            break
+                            // register hit in damage zone
+                            dz.enemy_hit_count += 1
                         }
                     }
-                    if !was_in_zone_prev_tick {
-                        // apply damage
-                        e.health -= dz.damage
+                }
+            }
 
-                        // apply knockback
-                        // TODO: should knockback be applied right here?
-                        away_from_player := -linalg.normalize(get_center(player.pos, player.dim) - get_center(e.pos, e.dim))
-                        e.velocity = away_from_player * 100
+            // Process enemy deaths
+            for ei in 0..<len(enemies.slots) {
+                e, _ := pool_index_get(enemies, ei) or_continue
+                if e.health <= 0 {
+                    // spawn XP drop
+                    pool_add(&xp_drops, XP_Drop{xp=1, pos=e.pos})
 
-                        // create damage indicator
-                        pool_add(&damage_indicators, Damage_Indicator{ damage=int(dz.damage), pos=e.pos, remaining_display_time=DAMAGE_INDICATOR_DISPLAY_TIME})
+                    // Free killed enemy
+                    pool_index_free(&enemies, ei)
+                }
+            }
 
-                        // register hit in damage zone
-                        dz.enemy_hit_count += 1
+            // Update xp drops
+            for i in 0..<len(xp_drops.slots) {
+                drop, _ := pool_index_get(xp_drops, i) or_continue
+                drop.pos += drop.velocity * TICK_TIME
+                // If player touches xp drop, pick it up
+                if aabb_collision_check(player.pos, player.dim, drop.pos, XP_DROP_DIM) {
+                    player.cur_xp += drop.xp
+                    // delete xp drop
+                    pool_index_free(&xp_drops, i)
+                }
+                else {
+                    // If player is in proximity of xp drop, make xp drop accelerate towards player
+                    player_center := get_center(player.pos, player.dim)
+                    drop_center := get_center(drop.pos, drop.dim)
+                    if linalg.length(player_center - drop_center) <= XP_PICKUP_RANGE {
+                        to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(drop.pos, drop.dim))
+                        drop.velocity += to_player * XP_DROP_ACCEL * TICK_TIME
                     }
                 }
             }
-        }
 
-        // Process enemy deaths
-        for ei in 0..<len(enemies.slots) {
-            e, _ := pool_index_get(enemies, ei) or_continue
-            if e.health <= 0 {
-                // spawn XP drop
-                pool_add(&xp_drops, XP_Drop{xp=1, pos=e.pos})
+            // Level up player based on gained xp
+            leveled_up := false
+            for player.cur_xp >= player.req_xp {
+                player.cur_xp -= player.req_xp
+                player.target_level += 1
+                leveled_up = true
 
-                // Free killed enemy
-                pool_index_free(&enemies, ei)
-            }
-        }
-
-        // Update xp drops
-        for i in 0..<len(xp_drops.slots) {
-            drop, _ := pool_index_get(xp_drops, i) or_continue
-            drop.pos += drop.velocity * TICK_TIME
-            // If player touches xp drop, pick it up
-            if aabb_collision_check(player.pos, player.dim, drop.pos, XP_DROP_DIM) {
-                player.experience += drop.xp
-                // delete xp drop
-                pool_index_free(&xp_drops, i)
-            }
-            else {
-                // If player is in proximity of xp drop, make xp drop accelerate towards player
-                player_center := get_center(player.pos, player.dim)
-                drop_center := get_center(drop.pos, drop.dim)
-                if linalg.length(player_center - drop_center) <= XP_PICKUP_RANGE {
-                    to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(drop.pos, drop.dim))
-                    drop.velocity += to_player * XP_DROP_ACCEL * TICK_TIME
+                // determine next required xp
+                if player.target_level < 20 {
+                    player.req_xp += 10
+                }
+                else if player.target_level < 40 {
+                    player.req_xp += 13
+                }
+                else {
+                    player.req_xp += 20
                 }
             }
+
+            if leveled_up {
+                game_state = .LEVEL_UP_ENTRY
+                level_up_entry_progress = 0
+            }
+
         }
 
         // Update music
@@ -340,7 +404,14 @@ main :: proc() {
         rl.DrawFPS(0,0)
 
         // Draw player's XP
-        rl.DrawText(rl.TextFormat("XP: %d", player.experience), rl.GetScreenWidth() - 100, 20, 22, rl.GREEN)
+        rl.DrawText(rl.TextFormat("Level: %d", player.cur_level), rl.GetScreenWidth() - 100, 20, 22, rl.GREEN)
+        rl.DrawText(rl.TextFormat("Target Level: %d", player.target_level), rl.GetScreenWidth() - 200, 50, 22, rl.GREEN)
+
+
+        if game_state == .LEVEL_UP || game_state == .LEVEL_UP_ENTRY {
+            // Draw level up screen
+            rl.DrawRectangleRec(to_rec(level_up_screen.pos, level_up_screen.dim), rl.Color{255, 0, 255, 127})
+        }
 
         rl.EndDrawing()
     }
@@ -377,7 +448,29 @@ Player :: struct {
     dim: [2]f32,
     move_speed: f32,
     facing_dir: [2]f32,
-    experience: int,
+
+    // Since it is possible that the player may level up multiple times in a single tick,
+    // we use these cur_level and target_level variables (target_level is the actual up-to-date player level).
+    // (target_level - cur_level) is the amount of level-up screens that the player still needs to select.
+    // If target_level == cur_level then the player can continue playing.
+    cur_level: int,
+    target_level: int,
+
+    req_xp: int, // required xp to level up to next level
+    cur_xp: int,
+}
+
+PLAYER_START_REQ_XP :: 5
+
+player_init :: proc(player: ^Player) {
+    player.pos = [2]f32{10,10}
+    player.dim = [2]f32{50,50}
+    player.move_speed = f32(100)
+    player.facing_dir = [2]f32{1,0}
+    player.cur_level = 0
+    player.target_level = player.cur_level
+    player.req_xp = PLAYER_START_REQ_XP
+    player.cur_xp = 0
 }
 
 Entity :: struct {
