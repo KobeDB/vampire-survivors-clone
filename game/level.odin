@@ -16,7 +16,7 @@ Level :: struct {
     xp_drops: Pool(XP_Drop),
 }
 
-MAX_ENEMIES :: 10000
+MAX_ENEMIES :: 100
 MAX_DAMAGE_ZONES :: 500
 MAX_WEAPONS :: 10
 MAX_DAMAGE_INDICATORS :: 10000
@@ -42,8 +42,8 @@ level_init :: proc(using level: ^Level) {
 
     pool_init(&weapons, MAX_WEAPONS)
     pool_add(&weapons, make_whip(&damage_zones))
-    pool_add(&weapons, make_bibles(&damage_zones))
-    pool_add(&weapons, make_magic_wand(&damage_zones))
+    //pool_add(&weapons, make_bibles(&damage_zones))
+    //pool_add(&weapons, make_magic_wand(&damage_zones))
 
     pool_init(&damage_indicators, MAX_DAMAGE_INDICATORS)
 

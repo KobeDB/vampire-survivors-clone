@@ -8,6 +8,9 @@ import "core:math/linalg"
 import "core:math/rand"
 import sa "core:container/small_array"
 import "core:math"
+import "core:reflect"
+import "base:runtime"
+
 
 TICK_TIME :: 1.0/60.0
 
@@ -23,6 +26,8 @@ Level_Up_Screen :: struct {
     pos: [2]f32,
     dim: [2]f32,
     entry_progress: int, // progress of entry "animation" of the screen
+    options: sa.Small_Array(3, typeid), // Store Weapon union variant typeids
+    selected_option: int,
 }
 LEVEL_UP_ENTRY_DURATION :: 30 // also in ticks
 
@@ -33,9 +38,27 @@ Game_State :: enum {
 
 transition_to_game_state :: proc(game_state: ^Game_State, new_game_state: Game_State) {
     defer game_state^ = new_game_state
-    #partial switch game_state^ {
+    #partial switch new_game_state {
         case .LEVEL_UP: {
             level_up_screen.entry_progress = 0
+
+            // Add available weapons to level-up options
+            sa.clear(&level_up_screen.options)
+            weapon_variants := runtime.type_info_base(type_info_of(Weapon)).variant.(runtime.Type_Info_Union).variants
+            for weapon_variant in weapon_variants {
+                taken := false
+                for wi in 0..<len(level.weapons.slots) {
+                    taken_weapon, _ := pool_index_get(level.weapons, wi) or_continue
+                    if reflect.union_variant_typeid(taken_weapon^) == weapon_variant.id {
+                        taken = true
+                        break
+                    }
+                }
+                if !taken {
+                    sa.append(&level_up_screen.options, weapon_variant.id)
+                }
+            }
+
         }
     }
 }
@@ -77,26 +100,50 @@ main :: proc() {
         defer ticks += 1
 
         if game_state == .LEVEL_UP {
-            if level_up_screen.entry_progress >= LEVEL_UP_ENTRY_DURATION {
-                if rl.IsKeyDown(.L) {
-                    level.player.cur_level += 1
-                    if level.player.cur_level < level.player.target_level {
-                        transition_to_game_state(&game_state, .LEVEL_UP)
-                    }
-                    else {
-                        transition_to_game_state(&game_state, .IN_GAME)
-                    }
-                }
-            }
-            else {
+            // Play screen animation
+            if level_up_screen.entry_progress < LEVEL_UP_ENTRY_DURATION {
                 progress := f32(level_up_screen.entry_progress) / LEVEL_UP_ENTRY_DURATION
                 target_pos :: [2]f32{50,50}
                 start_pos := target_pos - [2]f32{0, level_up_screen.dim.y }
                 level_up_screen.pos = progress * target_pos + (1-progress) * start_pos
-                if level_up_screen.entry_progress == LEVEL_UP_ENTRY_DURATION {
+                level_up_screen.entry_progress += 1
+            }
+
+            if rl.IsKeyPressed(.W) {
+                level_up_screen.selected_option = max(level_up_screen.selected_option-1, 0)
+            }
+            if rl.IsKeyPressed(.S) {
+                level_up_screen.selected_option = min(level_up_screen.selected_option+1, sa.len(level_up_screen.options)-1)
+            }
+
+            if rl.IsKeyPressed(.SPACE) {
+                if sa.len(level_up_screen.options) > 0 {
+                    // Add selected weapon to weapons
+                    selected_weapon := sa.get(level_up_screen.options, level_up_screen.selected_option)
+                    switch selected_weapon {
+                        case typeid_of(Whip):     { pool_add(&level.weapons, make_whip(&level.damage_zones)) }
+                        case typeid_of(Bibles):   { pool_add(&level.weapons, make_bibles(&level.damage_zones)) }
+                        case typeid_of(Magic_Wand):   { pool_add(&level.weapons, make_magic_wand(&level.damage_zones)) }
+                    }
+                }
+
+                level.player.cur_level += 1
+                if level.player.cur_level < level.player.target_level {
                     transition_to_game_state(&game_state, .LEVEL_UP)
                 }
-                level_up_screen.entry_progress += 1
+                else {
+                    transition_to_game_state(&game_state, .IN_GAME)
+                }
+            }
+
+            if rl.IsKeyPressed(.L) {
+                level.player.cur_level += 1
+                if level.player.cur_level < level.player.target_level {
+                    transition_to_game_state(&game_state, .LEVEL_UP)
+                }
+                else {
+                    transition_to_game_state(&game_state, .IN_GAME)
+                }
             }
         }
         else if game_state == .IN_GAME {
@@ -126,6 +173,17 @@ main :: proc() {
             // Draw level up screen
             rl.DrawRectangleRec(to_rec(level_up_screen.pos, level_up_screen.dim), rl.Color{255, 0, 255, 127})
             rl.DrawText(rl.TextFormat("LEVEL UP!!!: %d", level.player.target_level), i32(level_up_screen.pos.x), i32(level_up_screen.pos.y), 50, rl.GREEN)
+            // Draw weapon option buttons
+            num_buttons := sa.len(level_up_screen.options)
+            button_dim := [2]f32{level_up_screen.dim.x, (level_up_screen.dim.y / f32(num_buttons))}
+            for button_i in 0..<num_buttons {
+                button_pos := [2]f32{ level_up_screen.pos.x, level_up_screen.pos.y + button_dim.y * f32(button_i) }
+                selection_tint: u8 = 200 if button_i == level_up_screen.selected_option else 127
+                rl.DrawRectangleRec(to_rec(button_pos, button_dim), rl.Color{160, 100, 150, selection_tint})
+                button_text := fmt.caprint("Option: ", sa.get(level_up_screen.options, button_i))
+                defer delete(button_text)
+                rl.DrawText(button_text, i32(button_pos.x), i32(button_pos.y), 50, rl.GREEN)
+            }
         }
 
         rl.EndDrawing()
