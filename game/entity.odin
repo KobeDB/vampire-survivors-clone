@@ -62,6 +62,7 @@ DAMAGE_INDICATOR_DISPLAY_TIME :: 50
 XP_Drop :: struct {
         using entity: Entity,
         xp: int,
+        accelerate_towards_player: bool,
 }
 XP_DROP_DIM :: [2]f32{10,15}
 XP_DROP_ACCEL :: 1000

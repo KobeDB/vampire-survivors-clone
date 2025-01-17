@@ -106,7 +106,7 @@ Whip :: struct {
 }
 
 WHIP_COOLDOWN :: 100
-WHIP_LIFETIME :: 1
+WHIP_LIFETIME :: 10
 
 make_whip :: proc(damage_zones: ^Pool(Damage_Zone)) -> Whip {
     dz: Damage_Zone

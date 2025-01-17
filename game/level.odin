@@ -16,7 +16,7 @@ Level :: struct {
     xp_drops: Pool(XP_Drop),
 }
 
-MAX_ENEMIES :: 100
+MAX_ENEMIES :: 10000
 MAX_DAMAGE_ZONES :: 500
 MAX_WEAPONS :: 10
 MAX_DAMAGE_INDICATORS :: 10000
@@ -215,12 +215,17 @@ level_tick :: proc(using level: ^Level, game_state: ^Game_State, camera: ^rl.Cam
             player.cur_xp += drop.xp
             // delete xp drop
             pool_index_free(&xp_drops, i)
+            continue
         }
         else {
-            // If player is in proximity of xp drop, make xp drop accelerate towards player
+            // If player is in proximity of xp drop, make xp drop permanently accelerate towards player
             player_center := get_center(player.pos, player.dim)
             drop_center := get_center(drop.pos, drop.dim)
             if linalg.length(player_center - drop_center) <= XP_PICKUP_RANGE {
+                drop.accelerate_towards_player = true
+            }
+
+            if drop.accelerate_towards_player {
                 to_player := linalg.normalize(get_center(player.pos, player.dim) - get_center(drop.pos, drop.dim))
                 drop.velocity += to_player * XP_DROP_ACCEL * TICK_TIME
             }
