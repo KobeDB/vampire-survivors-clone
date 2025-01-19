@@ -50,7 +50,7 @@ level_init :: proc(using level: ^Level) {
     pool_init(&xp_drops, MAX_XP_DROPS)
 }
 
-level_tick :: proc(using level: ^Level, game_state: ^Game_State, camera: ^rl.Camera2D) {
+level_tick :: proc(using level: ^Level, camera: ^rl.Camera2D) {
     move_dir: [2]f32
     if rl.IsKeyDown(.D) {
         move_dir.x += 1
@@ -252,7 +252,7 @@ level_tick :: proc(using level: ^Level, game_state: ^Game_State, camera: ^rl.Cam
     }
 
     if leveled_up {
-        transition_to_game_state(game_state, .LEVEL_UP)
+        transition_to_game_state(.LEVEL_UP)
     }
 }
 
