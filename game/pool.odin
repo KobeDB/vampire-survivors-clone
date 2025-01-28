@@ -85,3 +85,7 @@ pool_index_free :: proc(pool: ^Pool($T), index: int) {
 pool_is_free_index :: proc(pool: Pool($T), index: int) -> bool {
     return !pool.is_occupied[index]
 }
+
+pool_size :: proc(pool: Pool($T)) -> int {
+    return pool.free_stack_top
+}

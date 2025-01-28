@@ -73,15 +73,10 @@ main :: proc() {
 
     // Init state
     // -------------------
-    level_init(&level)
+    level_init(&level, SCREEN_DIM)
 
     level_up_screen.dim = { 0.8 * f32(rl.GetScreenWidth()), 0.8 * f32(rl.GetScreenHeight())}
     // ------------------
-
-    camera: rl.Camera2D
-    camera.target = {level.player.pos.x + level.player.dim.x/2 , level.player.pos.y + level.player.dim.y/2}
-    camera.offset = {SCREEN_DIM.x / 2, SCREEN_DIM.y / 2}
-    camera.zoom = 1
 
     ticks: u64 = 0
 
@@ -91,8 +86,10 @@ main :: proc() {
         // ---------------
         defer ticks += 1
 
+        defer free_all(context.temp_allocator)
+
         if game_state == .IN_GAME {
-            level_tick(&level, &camera)
+            level_tick(&level)
         }
         else if game_state == .LEVEL_UP {
             level_up_screen_tick(&level_up_screen, &level)
@@ -109,10 +106,10 @@ main :: proc() {
         rl.ClearBackground(rl.GRAY)
 
         if game_state == .IN_GAME {
-            level_draw(level, camera)
+            level_draw(level)
         }
         else if game_state == .LEVEL_UP {
-            level_draw(level, camera)
+            level_draw(level)
             level_up_screen_draw(level_up_screen, level)
         }
 

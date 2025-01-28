@@ -26,7 +26,7 @@ PLAYER_START_REQ_XP :: 5
 player_init :: proc(player: ^Player) {
     player.pos = [2]f32{10,10}
     player.dim = [2]f32{50,50}
-    player.move_speed = f32(100)
+    player.move_speed = f32(170)
     player.facing_dir = [2]f32{1,0}
     player.cur_level = 0
     player.target_level = player.cur_level
@@ -40,7 +40,15 @@ Entity :: struct {
     velocity: [2]f32,
     max_move_speed: f32,
     health: f32,
-    damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone))
+    damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone)),
+    color: rl.Color,
+}
+
+Enemy_Type :: enum {
+    Bat=0,
+    Zombie,
+    Strong_Bat,
+    Skeleton,
 }
 
 Damage_Zone :: struct {

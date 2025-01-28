@@ -5,7 +5,7 @@ import rlgl "vendor:raylib/rlgl"
 import "core:math/linalg"
 import sa "core:container/small_array"
 import "core:math/rand"
-
+import "core:math"
 
 Level :: struct {
     player: Player,
@@ -14,6 +14,8 @@ Level :: struct {
     weapons: Pool(Weapon),
     damage_indicators: Pool(Damage_Indicator),
     xp_drops: Pool(XP_Drop),
+    wave: Wave,
+    camera: rl.Camera2D,
 }
 
 MAX_ENEMIES :: 10000
@@ -23,20 +25,21 @@ MAX_DAMAGE_INDICATORS :: 10000
 MAX_XP_DROPS :: 10000
 
 
-level_init :: proc(using level: ^Level) {
+level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
     player_init(&player)
 
     pool_init(&enemies, MAX_ENEMIES)
-    for i in 0..<MAX_ENEMIES {
-        enemy_spread: f32 = MAX_ENEMIES * 1
-        pos := [2]f32{rand.float32_range(-enemy_spread,enemy_spread), rand.float32_range(-enemy_spread,enemy_spread)}
-        e: Entity
-        e.pos = pos
-        e.dim = {40,40}
-        e.max_move_speed = 50
-        e.health = 150
-        pool_add(&enemies, e)
-    }
+    // for i in 0..<MAX_ENEMIES {
+    //     enemy_spread: f32 = MAX_ENEMIES * 1
+    //     pos := [2]f32{rand.float32_range(-enemy_spread,enemy_spread), rand.float32_range(-enemy_spread,enemy_spread)}
+    //     e: Entity
+    //     e.pos = pos
+    //     e.dim = {40,40}
+    //     e.max_move_speed = 50
+    //     e.health = 150
+    //     e.color = rl.MAROON
+    //     pool_add(&enemies, e)
+    // }
 
     pool_init(&damage_zones, MAX_DAMAGE_ZONES)
 
@@ -48,9 +51,15 @@ level_init :: proc(using level: ^Level) {
     pool_init(&damage_indicators, MAX_DAMAGE_INDICATORS)
 
     pool_init(&xp_drops, MAX_XP_DROPS)
+
+    wave_init(&wave)
+
+    camera.target = {level.player.pos.x + level.player.dim.x/2 , level.player.pos.y + level.player.dim.y/2}
+    camera.offset = {screen_dim.x / 2, screen_dim.y / 2}
+    camera.zoom = 1
 }
 
-level_tick :: proc(using level: ^Level, camera: ^rl.Camera2D) {
+level_tick :: proc(using level: ^Level) {
     move_dir: [2]f32
     if rl.IsKeyDown(.D) {
         move_dir.x += 1
@@ -80,6 +89,9 @@ level_tick :: proc(using level: ^Level, camera: ^rl.Camera2D) {
         weapon, _ := pool_index_get(weapons, wi) or_continue
         weapon_tick(weapon, player, &damage_zones)
     }
+
+    // Potentially spawn enemies
+    wave_tick(&wave, level)
 
     // Move enemies
     for i in 0..<len(enemies.slots) {
@@ -256,7 +268,7 @@ level_tick :: proc(using level: ^Level, camera: ^rl.Camera2D) {
     }
 }
 
-level_draw :: proc(using level: Level, camera: rl.Camera2D) {
+level_draw :: proc(using level: Level) {
         rl.BeginMode2D(camera)
 
         // Draw grid
@@ -278,7 +290,7 @@ level_draw :: proc(using level: Level, camera: rl.Camera2D) {
             e, _ := pool_index_get(enemies, i) or_continue
             border := [2]f32{3,3}
             rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.BLACK)
-            rl.DrawRectangleRec(to_rec(e.pos + border, e.dim - 2 * border), rl.MAROON)
+            rl.DrawRectangleRec(to_rec(e.pos + border, e.dim - 2 * border), e.color)
         }
 
         // Draw damage zones
@@ -313,5 +325,163 @@ level_draw :: proc(using level: Level, camera: rl.Camera2D) {
         }
 
     rl.EndMode2D()
+
+    // Draw wave number
+    rl.DrawText(rl.TextFormat("Wave: %d", wave.wave_number), rl.GetScreenWidth() - 100, 80, 22, rl.GREEN)
+
+    // Draw number of living enemies
+    rl.DrawText(rl.TextFormat("Enemies left: %d", pool_size(enemies)), rl.GetScreenWidth() - 200, 100, 22, rl.GREEN)
+
 }
 
+Wave :: struct {
+    wave_number: int,
+    ticks_until_next_wave: int,
+    ticks_until_next_spawn: int,
+}
+
+SPAWN_INTERVAL :: 600
+WAVE_INTERVAL :: 1800
+
+WAVE_1_ENEMIES :: [?]Enemy_Type{.Bat, .Zombie}
+WAVE_1_DIST :: [?]f32{0.7,0.3}
+
+wave_init :: proc(using wave: ^Wave) {
+    wave_number = 0
+    ticks_until_next_wave = WAVE_INTERVAL
+    ticks_until_next_spawn = int(f32(SPAWN_INTERVAL) * 0.2)
+}
+
+wave_tick :: proc(using wave: ^Wave, level: ^Level) {
+    ticks_until_next_wave -= 1
+    ticks_until_next_spawn -= 1
+    if ticks_until_next_wave <= 0 {
+        wave_number += 1
+        ticks_until_next_wave = WAVE_INTERVAL
+        ticks_until_next_spawn = 0
+    }
+
+    if ticks_until_next_spawn <= 0 {
+        ticks_until_next_spawn = SPAWN_INTERVAL
+        // spawn enemies
+        spawn_enemies(level)
+    }
+}
+
+spawn_enemies :: proc(level: ^Level) {
+    wave_enemy_limit: int
+    enemy_dist: []f32
+    switch level.wave.wave_number {
+        case 0: {
+            enemy_dist = make([]f32, 1, context.temp_allocator)
+            enemy_dist[0] = 1
+            wave_enemy_limit = 10
+        }
+        case 1: {
+            enemy_dist = make([]f32, 2, context.temp_allocator)
+            enemy_dist[0] = 0.7
+            enemy_dist[1] = 0.3
+            wave_enemy_limit = 20
+        }
+        case 2: {
+            enemy_dist = make([]f32, 3, context.temp_allocator)
+            enemy_dist[0] = 0.4
+            enemy_dist[1] = 0.3
+            enemy_dist[2] = 0.3
+            wave_enemy_limit = 20
+        }
+        case 3: case: {
+            enemy_dist = make([]f32, 4, context.temp_allocator)
+            enemy_dist[0] = 0.0
+            enemy_dist[1] = 0.0
+            enemy_dist[2] = 0.1
+            enemy_dist[3] = 0.9
+            wave_enemy_limit = 40
+        }
+
+    }
+
+    enemy_deficit := wave_enemy_limit - pool_size(level.enemies)
+    for _ in 0..<enemy_deficit {
+        enemy: Entity
+
+        // sample entity position
+        viewport_pos, viewport_dim := get_viewport(level.player, level.camera)
+        spawn_area_thickness := f32(200)
+        offset := [2]f32{rand.float32_range(20, spawn_area_thickness), rand.float32_range(20,spawn_area_thickness)}
+        spawn_on_sides := true if math.sign(rand.float32_range(-1,1)) <= 0 else false
+        spawn_on_first := true if math.sign(rand.float32_range(-1,1)) <= 0 else false
+
+        if spawn_on_sides {
+            max_y: f32 = level.player.pos.y + viewport_dim.y/2 + spawn_area_thickness
+            min_y: f32 = level.player.pos.y - viewport_dim.y/2 - spawn_area_thickness
+            enemy.pos.y = rand.float32_range(min_y, max_y)
+            if spawn_on_first {
+                enemy.pos.x = level.player.pos.x - viewport_dim.x/2 - offset.x
+            }
+            else {
+                enemy.pos.x = level.player.pos.x + viewport_dim.x/2 + offset.x
+            }
+        }
+        else {
+            max_x: f32 = level.player.pos.x + viewport_dim.x/2 + spawn_area_thickness
+            min_x: f32 = level.player.pos.x - viewport_dim.x/2 - spawn_area_thickness
+            enemy.pos.x = rand.float32_range(min_x, max_x)
+            if spawn_on_first {
+                enemy.pos.y = level.player.pos.y - viewport_dim.y/2 - offset.y
+            }
+            else {
+                enemy.pos.y = level.player.pos.y + viewport_dim.y/2 + offset.y
+            }
+        }
+
+        // TODO: sample enemy type from a non-uniform distribution
+        enemy_type := Enemy_Type(sample_dist(enemy_dist))
+        switch enemy_type {
+            case .Bat: {
+                enemy.dim = {40,40}
+                enemy.max_move_speed = 80
+                enemy.health = 75
+                enemy.color = rl.MAROON
+            }
+            case .Zombie: {
+                enemy.dim = {40,75}
+                enemy.max_move_speed = 50
+                enemy.health = 150
+                enemy.color = rl.GREEN
+            }
+            case .Strong_Bat: {
+                enemy.dim = {50,50}
+                enemy.max_move_speed = 80
+                enemy.health = 130
+                enemy.color = rl.MAROON
+            }
+            case .Skeleton: {
+                enemy.dim = {40, 75}
+                enemy.max_move_speed = 40
+                enemy.health = 220
+                enemy.color = rl.RAYWHITE
+            }
+        }
+
+        pool_add(&level.enemies, enemy)
+    }
+}
+
+sample_dist :: proc(distribution: []f32) -> int {
+    r := rand.float32()
+    cur := f32(0)
+    for i in 0..<len(distribution) {
+        next := cur + distribution[i]
+        if r <= next {
+            return i
+        }
+        cur = next
+    }
+    // shouldn't get here I think ?
+    return len(distribution)-1
+}
+
+get_viewport :: proc(player: Player, camera: rl.Camera2D) -> (pos: [2]f32, dim: [2]f32) {
+    return get_center(player.pos, player.dim) - camera.offset, {f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
+}
