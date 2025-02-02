@@ -11,6 +11,7 @@ Pool :: struct($T: typeid) {
 Pool_Handle :: struct($T: typeid) {
     index: int,
     generation: u64,
+    pool: ^Pool(T),
 }
 
 pool_init :: proc(pool: ^Pool($T), num_slots: int) {
@@ -34,7 +35,7 @@ pool_add :: proc(pool: ^Pool($T), value: T) -> Pool_Handle(T) {
 
     pool.slots[index] = value
     pool.is_occupied[index] = true
-    return {index, pool.generations[index]}
+    return {index, pool.generations[index], pool}
 }
 
 pool_pop_free_index :: proc(pool: ^Pool($T)) -> (int, bool) {
@@ -58,16 +59,30 @@ crash_on_invalid_handle :: proc(pool: Pool($T), handle: Pool_Handle(T)) {
     }
 }
 
-pool_get :: proc(pool: Pool($T), handle: Pool_Handle(T)) -> ^T {
+_pool_get :: proc(pool: Pool($T), handle: Pool_Handle(T)) -> ^T {
     crash_on_invalid_handle(pool, handle)
     return &pool.slots[handle.index]
 }
+
+pool_handle_get :: proc(handle: Pool_Handle($T)) -> ^T {
+    return _pool_get(handle.pool^, handle)
+}
+
+pool_get :: proc{_pool_get, pool_handle_get}
 
 pool_index_get :: proc(pool: Pool($T), index: int) -> (val:^T, gen:u64, success: bool) {
     if pool_is_free_index(pool, index) {
         return nil, 0, false
     }
     return &pool.slots[index], pool.generations[index], true
+}
+
+pool_get_handle_from_index :: proc(pool: ^Pool($T), index: int) -> Pool_Handle(T) {
+    if pool_is_free_index(pool^, index) {
+        // TODO: report error
+        return {}
+    }
+    return {index=index, generation=pool.generations[index], pool=pool}
 }
 
 pool_free :: proc(pool: ^Pool($T), handle: Pool_Handle(T)) {

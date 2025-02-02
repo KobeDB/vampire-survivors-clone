@@ -16,6 +16,7 @@ Level :: struct {
     xp_drops: Pool(XP_Drop),
     wave: Wave,
     camera: rl.Camera2D,
+    countdowns: Pool(Countdown),
 }
 
 MAX_ENEMIES :: 10000
@@ -23,7 +24,7 @@ MAX_DAMAGE_ZONES :: 500
 MAX_WEAPONS :: 10
 MAX_DAMAGE_INDICATORS :: 10000
 MAX_XP_DROPS :: 10000
-
+MAX_COUNTDOWNS :: 1000
 
 level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
     player_init(&player)
@@ -43,6 +44,9 @@ level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
 
     pool_init(&damage_zones, MAX_DAMAGE_ZONES)
 
+    pool_init(&countdowns, MAX_COUNTDOWNS)
+
+
     pool_init(&weapons, MAX_WEAPONS)
     pool_add(&weapons, make_whip(&damage_zones))
     //pool_add(&weapons, make_bibles(&damage_zones))
@@ -52,11 +56,12 @@ level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
 
     pool_init(&xp_drops, MAX_XP_DROPS)
 
-    wave_init(&wave)
+    wave_init(&wave, level)
 
     camera.target = {level.player.pos.x + level.player.dim.x/2 , level.player.pos.y + level.player.dim.y/2}
     camera.offset = {screen_dim.x / 2, screen_dim.y / 2}
     camera.zoom = 1
+
 }
 
 level_tick :: proc(using level: ^Level) {
@@ -82,6 +87,11 @@ level_tick :: proc(using level: ^Level) {
 
     // Update camera target to follow player
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
+
+    // Tick Countdowns
+    // ---------------------
+    tick_countdowns(level)
+    defer reset_expired_countdowns(level)
 
     // Update weapons
     // ----------------------
@@ -178,7 +188,8 @@ level_tick :: proc(using level: ^Level) {
             if !dz.is_active { continue }
             in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
             if in_zone {
-                zone_handle := Pool_Handle(Damage_Zone){dzi, gen}
+                zone_handle := pool_get_handle_from_index(&damage_zones, dzi)
+                // zone_handle := Pool_Handle(Damage_Zone){dzi, gen, }
                 sa.append(&damage_zones_cur_tick, zone_handle)
                 was_in_zone_prev_tick := false
                 for dz_prev_tick in sa.slice(&e.damage_zones_prev_tick) {
@@ -334,10 +345,43 @@ level_draw :: proc(using level: Level) {
 
 }
 
+Countdown :: struct {
+    remaining_ticks: int,
+    interval: int,
+}
+
+make_countdown :: proc(interval: int) -> Countdown {
+    return {remaining_ticks=interval, interval=interval}
+}
+
+countdown_expired :: proc(countdown: Countdown) -> bool {
+    return countdown.remaining_ticks <= 0
+}
+
+countdown_set_to_expired :: proc(countdown: ^Countdown) {
+    countdown.remaining_ticks = 0
+}
+
+tick_countdowns :: proc(level: ^Level) {
+    for i in 0..<len(level.countdowns.slots) {
+        countdown, _ := pool_index_get(level.countdowns, i) or_continue
+        countdown.remaining_ticks -= 1
+    }
+}
+
+reset_expired_countdowns :: proc(level: ^Level) {
+    for i in 0..<len(level.countdowns.slots) {
+        countdown, _ := pool_index_get(level.countdowns, i) or_continue
+        if countdown_expired(countdown^) {
+            countdown.remaining_ticks = countdown.interval
+        }
+    }
+}
+
 Wave :: struct {
     wave_number: int,
-    ticks_until_next_wave: int,
-    ticks_until_next_spawn: int,
+    next_wave_countdown: Pool_Handle(Countdown),
+    next_spawn_countdown: Pool_Handle(Countdown),
 }
 
 SPAWN_INTERVAL :: 600
@@ -346,23 +390,19 @@ WAVE_INTERVAL :: 1800
 WAVE_1_ENEMIES :: [?]Enemy_Type{.Bat, .Zombie}
 WAVE_1_DIST :: [?]f32{0.7,0.3}
 
-wave_init :: proc(using wave: ^Wave) {
+wave_init :: proc(using wave: ^Wave, level: ^Level) {
     wave_number = 0
-    ticks_until_next_wave = WAVE_INTERVAL
-    ticks_until_next_spawn = int(f32(SPAWN_INTERVAL) * 0.2)
+    next_wave_countdown = pool_add(&level.countdowns, make_countdown(WAVE_INTERVAL))
+    next_spawn_countdown = pool_add(&level.countdowns, make_countdown(int(f32(SPAWN_INTERVAL) * 0.2)) )
 }
 
 wave_tick :: proc(using wave: ^Wave, level: ^Level) {
-    ticks_until_next_wave -= 1
-    ticks_until_next_spawn -= 1
-    if ticks_until_next_wave <= 0 {
+    if countdown_expired(pool_get(next_wave_countdown)^) {
         wave_number += 1
-        ticks_until_next_wave = WAVE_INTERVAL
-        ticks_until_next_spawn = 0
+        countdown_set_to_expired(pool_get(next_spawn_countdown))
     }
 
-    if ticks_until_next_spawn <= 0 {
-        ticks_until_next_spawn = SPAWN_INTERVAL
+    if countdown_expired(pool_get(next_spawn_countdown)^) {
         // spawn enemies
         spawn_enemies(level)
     }
