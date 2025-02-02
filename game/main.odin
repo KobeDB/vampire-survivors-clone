@@ -66,8 +66,11 @@ main :: proc() {
     rl.InitWindow(i32(SCREEN_DIM.x), i32(SCREEN_DIM.y) , "The window")
     rl.InitAudioDevice()
 
+    // TODO: Move music initialization to load_resources
     music := rl.LoadMusicStream("res/sounds/vampire_jam.mp3")
     rl.PlayMusicStream(music)
+
+    load_resources()
 
     rl.SetTargetFPS(1.0/TICK_TIME)
 

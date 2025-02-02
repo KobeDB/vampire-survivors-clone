@@ -82,6 +82,14 @@ level_tick :: proc(using level: ^Level) {
     }
     if move_dir != 0 {
         move_dir = linalg.normalize(move_dir)
+
+        // (maybe) progress animation
+        player.frame_elapsed_ticks += 1
+        if player.frame_time_ticks <= player.frame_elapsed_ticks {
+            player.frame_elapsed_ticks = 0
+            player.frame = (player.frame + 1) % 6
+        }
+
     }
     player.pos += player.move_speed * move_dir * TICK_TIME
 
@@ -294,7 +302,8 @@ level_draw :: proc(using level: Level) {
         rl.DrawRectangleRec(to_rec({0,10}, {5,5}), rl.GREEN)
 
         // Draw player
-        rl.DrawRectangleRec(to_rec(player.pos, player.dim), rl.MAGENTA)
+        player_draw(player)
+        //rl.DrawRectangleRec(to_rec(player.pos, player.dim), rl.MAGENTA)
 
         //Draw enemies
         for i in 0..<len(enemies.slots) {
