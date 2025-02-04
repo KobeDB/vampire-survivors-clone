@@ -65,33 +65,8 @@ level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
 }
 
 level_tick :: proc(using level: ^Level) {
-    move_dir: [2]f32
-    if rl.IsKeyDown(.D) {
-        move_dir.x += 1
-        player.facing_dir = {1,0}
-    }
-    if rl.IsKeyDown(.A) {
-        move_dir.x -= 1
-        player.facing_dir = {-1,0}
-    }
-    if rl.IsKeyDown(.S) {
-        move_dir.y += 1
-    }
-    if rl.IsKeyDown(.W) {
-        move_dir.y -= 1
-    }
-    if move_dir != 0 {
-        move_dir = linalg.normalize(move_dir)
 
-        // (maybe) progress animation
-        player.frame_elapsed_ticks += 1
-        if player.frame_time_ticks <= player.frame_elapsed_ticks {
-            player.frame_elapsed_ticks = 0
-            player.frame = (player.frame + 1) % 6
-        }
-
-    }
-    player.pos += player.move_speed * move_dir * TICK_TIME
+    player_tick(&player)
 
     // Update camera target to follow player
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
@@ -533,4 +508,29 @@ sample_dist :: proc(distribution: []f32) -> int {
 
 get_viewport :: proc(player: Player, camera: rl.Camera2D) -> (pos: [2]f32, dim: [2]f32) {
     return get_center(player.pos, player.dim) - camera.offset, {f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
+}
+
+Animation :: struct {
+    frame_elapsed_ticks: int,
+    frame_time_ticks: int,
+    frame: int,
+    frame_count: int, // number of frames in the texture
+    frame_width: f32, // width of a single frame in pixels
+    texture: rl.Texture2D,
+}
+
+animation_tick :: proc(using animation: ^Animation) {
+    frame_elapsed_ticks += 1
+    if frame_elapsed_ticks >= frame_time_ticks {
+        frame_elapsed_ticks = 0
+        frame = (frame + 1) % frame_count
+    }
+}
+
+animation_draw :: proc(using animation: Animation, dest_rec: rl.Rectangle, flip_horizontal: bool) {
+    frame_pos := [2]f32{ f32(frame) * frame_width, 0 }
+    frame_dim := [2]f32{ frame_width, f32(texture.height) }
+    if flip_horizontal { frame_dim.x = -frame_dim.x }
+    frame_rec := to_rec(frame_pos, frame_dim)
+    rl.DrawTexturePro(texture, frame_rec, dest_rec, {}, 0, rl.WHITE)
 }

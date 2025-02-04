@@ -2,7 +2,7 @@ package game
 
 import rl "vendor:raylib"
 import sa "core:container/small_array"
-
+import "core:math/linalg"
 
 Player :: struct {
     pos: [2]f32,
@@ -20,9 +20,7 @@ Player :: struct {
     req_xp: int, // required xp to level up to next level
     cur_xp: int,
 
-    frame_elapsed_ticks: int,
-    frame_time_ticks: int,
-    frame: int,
+    animation: Animation,
 }
 
 PLAYER_START_REQ_XP :: 5
@@ -30,29 +28,51 @@ PLAYER_START_REQ_XP :: 5
 player_init :: proc(player: ^Player) {
     player.pos = [2]f32{10,10}
     player.dim = [2]f32{75,75}
+
     player.move_speed = f32(170)
     player.facing_dir = [2]f32{1,0}
+
     player.cur_level = 0
     player.target_level = player.cur_level
     player.req_xp = PLAYER_START_REQ_XP
     player.cur_xp = 0
-    player.frame_elapsed_ticks = 0
-    player.frame_time_ticks = 10
-    player.frame = 0
+
+    anim: Animation
+    anim.frame_elapsed_ticks = 0
+    anim.frame_time_ticks = 10
+    anim.frame = 0
+    anim.frame_count = 6
+    anim.texture = get_texture("scarfy")
+    anim.frame_width = f32(anim.texture.width) / f32(anim.frame_count)
+    player.animation = anim
+}
+
+player_tick :: proc(player: ^Player) {
+    move_dir: [2]f32
+    if rl.IsKeyDown(.D) {
+        move_dir.x += 1
+        player.facing_dir = {1,0}
+    }
+    if rl.IsKeyDown(.A) {
+        move_dir.x -= 1
+        player.facing_dir = {-1,0}
+    }
+    if rl.IsKeyDown(.S) {
+        move_dir.y += 1
+    }
+    if rl.IsKeyDown(.W) {
+        move_dir.y -= 1
+    }
+    if move_dir != 0 {
+        move_dir = linalg.normalize(move_dir)
+        animation_tick(&player.animation)
+    }
+    player.pos += player.move_speed * move_dir * TICK_TIME
 }
 
 player_draw :: proc(player: Player) {
-    scarfy_tex := get_texture("scarfy")
     dest_rec := to_rec(player.pos, player.dim)
-    frame_pos: [2]f32
-    frame_pos.x = f32(player.frame) * f32(scarfy_tex.width)/6
-    frame_pos.y = 0
-    frame_dim := [2]f32{f32(scarfy_tex.width)/6,f32(scarfy_tex.height)}
-    if player.facing_dir.x < 0 {
-        frame_dim.x *= -1
-    }
-    frame_rec := to_rec(frame_pos, frame_dim)
-    rl.DrawTexturePro(scarfy_tex, frame_rec, dest_rec, {}, 0, rl.WHITE)
+    animation_draw(player.animation, dest_rec, player.facing_dir.x < 0)
 }
 
 Entity :: struct {
@@ -63,6 +83,7 @@ Entity :: struct {
     health: f32,
     damage_zones_prev_tick: sa.Small_Array(20, Pool_Handle(Damage_Zone)),
     color: rl.Color,
+    animation: Animation,
 }
 
 Enemy_Type :: enum {
