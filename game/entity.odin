@@ -37,14 +37,7 @@ player_init :: proc(player: ^Player) {
     player.req_xp = PLAYER_START_REQ_XP
     player.cur_xp = 0
 
-    anim: Animation
-    anim.frame_elapsed_ticks = 0
-    anim.frame_time_ticks = 10
-    anim.frame = 0
-    anim.frame_count = 6
-    anim.texture = get_texture("scarfy")
-    anim.frame_width = f32(anim.texture.width) / f32(anim.frame_count)
-    player.animation = anim
+    player.animation = animation_make(10, 6, get_texture("scarfy"), false)
 }
 
 player_tick :: proc(player: ^Player) {
@@ -71,8 +64,7 @@ player_tick :: proc(player: ^Player) {
 }
 
 player_draw :: proc(player: Player) {
-    dest_rec := to_rec(player.pos, player.dim)
-    animation_draw(player.animation, dest_rec, player.facing_dir.x < 0)
+    animation_draw(player.animation, get_center(player.pos, player.dim), player.facing_dir.x < 0)
 }
 
 Entity :: struct {
@@ -91,6 +83,57 @@ Enemy_Type :: enum {
     Zombie,
     Strong_Bat,
     Skeleton,
+}
+
+make_enemy :: proc(enemy_type: Enemy_Type, pos: [2]f32) -> Entity {
+    enemy: Entity
+    enemy.pos = pos
+    switch enemy_type {
+        case .Bat: {
+            enemy.dim = {40,40}
+            enemy.max_move_speed = 80
+            enemy.health = 75
+            enemy.color = rl.MAROON
+            enemy.animation = animation_make(5, 8, get_texture("bat"), true, {2,2})
+        }
+        case .Zombie: {
+            enemy.dim = {40,75}
+            enemy.max_move_speed = 50
+            enemy.health = 150
+            enemy.color = rl.GREEN
+        }
+        case .Strong_Bat: {
+            enemy.dim = {50,50}
+            enemy.max_move_speed = 80
+            enemy.health = 130
+            enemy.color = rl.MAROON
+            enemy.animation = animation_make(5, 8, get_texture("strong_bat"), true, {3,3})
+        }
+        case .Skeleton: {
+            enemy.dim = {40, 75}
+            enemy.max_move_speed = 40
+            enemy.health = 220
+            enemy.color = rl.RAYWHITE
+            enemy.animation = animation_make(10, frame_count=13, texture=get_texture("skeleton"))
+        }
+    }
+    return enemy
+}
+
+enemy_tick :: proc(enemy: Entity) {
+
+}
+
+enemy_draw :: proc(enemy: Entity) {
+    dest_rec := to_rec(enemy.pos, enemy.dim)
+    if enemy.animation.texture.id == 0 {
+        border := [2]f32{3,3}
+        rl.DrawRectangleRec(dest_rec, rl.BLACK)
+        rl.DrawRectangleRec(to_rec(enemy.pos + border, enemy.dim - 2 * border), enemy.color)
+    }
+    else {
+        animation_draw(enemy.animation, get_center(enemy.pos, enemy.dim), enemy.velocity.x < 0)
+    }
 }
 
 Damage_Zone :: struct {

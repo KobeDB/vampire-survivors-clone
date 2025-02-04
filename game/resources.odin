@@ -21,8 +21,12 @@ load_textures :: proc() {
     }
 
     load_texture("res/textures/scarfy.png", "scarfy")
+    load_texture("res/textures/skeleton.png", "skeleton")
+    load_texture("res/textures/bat.png", "bat")
+    load_texture("res/textures/strong_bat.png", "strong_bat")
 }
 
 get_texture :: proc(name: string) -> rl.Texture2D {
+    // TODO: log error if name not in textures
     return textures[name]
 }

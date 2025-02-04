@@ -98,6 +98,12 @@ level_tick :: proc(using level: ^Level) {
         e.pos += e.velocity * TICK_TIME
     }
 
+    // Tick enemy animations
+    for i in 0..<len(enemies.slots) {
+        e, _ := pool_index_get(enemies, i) or_continue
+        animation_tick(&e.animation)
+    }
+
 
     // Resolve enemy collisions
     enemy_enemy_collision_zone_pos := get_center(player.pos, player.dim) - camera.offset
@@ -283,9 +289,7 @@ level_draw :: proc(using level: Level) {
         //Draw enemies
         for i in 0..<len(enemies.slots) {
             e, _ := pool_index_get(enemies, i) or_continue
-            border := [2]f32{3,3}
-            rl.DrawRectangleRec(to_rec(e.pos, e.dim), rl.BLACK)
-            rl.DrawRectangleRec(to_rec(e.pos + border, e.dim - 2 * border), e.color)
+            enemy_draw(e^)
         }
 
         // Draw damage zones
@@ -427,8 +431,6 @@ spawn_enemies :: proc(level: ^Level) {
 
     enemy_deficit := wave_enemy_limit - pool_size(level.enemies)
     for _ in 0..<enemy_deficit {
-        enemy: Entity
-
         // sample entity position
         viewport_pos, viewport_dim := get_viewport(level.player, level.camera)
         spawn_area_thickness := f32(200)
@@ -436,57 +438,33 @@ spawn_enemies :: proc(level: ^Level) {
         spawn_on_sides := true if math.sign(rand.float32_range(-1,1)) <= 0 else false
         spawn_on_first := true if math.sign(rand.float32_range(-1,1)) <= 0 else false
 
+        enemy_pos: [2]f32
+
         if spawn_on_sides {
             max_y: f32 = level.player.pos.y + viewport_dim.y/2 + spawn_area_thickness
             min_y: f32 = level.player.pos.y - viewport_dim.y/2 - spawn_area_thickness
-            enemy.pos.y = rand.float32_range(min_y, max_y)
+            enemy_pos.y = rand.float32_range(min_y, max_y)
             if spawn_on_first {
-                enemy.pos.x = level.player.pos.x - viewport_dim.x/2 - offset.x
+                enemy_pos.x = level.player.pos.x - viewport_dim.x/2 - offset.x
             }
             else {
-                enemy.pos.x = level.player.pos.x + viewport_dim.x/2 + offset.x
+                enemy_pos.x = level.player.pos.x + viewport_dim.x/2 + offset.x
             }
         }
         else {
             max_x: f32 = level.player.pos.x + viewport_dim.x/2 + spawn_area_thickness
             min_x: f32 = level.player.pos.x - viewport_dim.x/2 - spawn_area_thickness
-            enemy.pos.x = rand.float32_range(min_x, max_x)
+            enemy_pos.x = rand.float32_range(min_x, max_x)
             if spawn_on_first {
-                enemy.pos.y = level.player.pos.y - viewport_dim.y/2 - offset.y
+                enemy_pos.y = level.player.pos.y - viewport_dim.y/2 - offset.y
             }
             else {
-                enemy.pos.y = level.player.pos.y + viewport_dim.y/2 + offset.y
+                enemy_pos.y = level.player.pos.y + viewport_dim.y/2 + offset.y
             }
         }
 
-        // TODO: sample enemy type from a non-uniform distribution
         enemy_type := Enemy_Type(sample_dist(enemy_dist))
-        switch enemy_type {
-            case .Bat: {
-                enemy.dim = {40,40}
-                enemy.max_move_speed = 80
-                enemy.health = 75
-                enemy.color = rl.MAROON
-            }
-            case .Zombie: {
-                enemy.dim = {40,75}
-                enemy.max_move_speed = 50
-                enemy.health = 150
-                enemy.color = rl.GREEN
-            }
-            case .Strong_Bat: {
-                enemy.dim = {50,50}
-                enemy.max_move_speed = 80
-                enemy.health = 130
-                enemy.color = rl.MAROON
-            }
-            case .Skeleton: {
-                enemy.dim = {40, 75}
-                enemy.max_move_speed = 40
-                enemy.health = 220
-                enemy.color = rl.RAYWHITE
-            }
-        }
+        enemy := make_enemy(enemy_type, enemy_pos)
 
         pool_add(&level.enemies, enemy)
     }
@@ -517,9 +495,28 @@ Animation :: struct {
     frame_count: int, // number of frames in the texture
     frame_width: f32, // width of a single frame in pixels
     texture: rl.Texture2D,
+    flip_horizontally_by_default: bool, // flag indicating whether sprite should be mirrored by default when drawn
+    scaling: [2]f32, // To rescale the sprite when drawing
+}
+
+animation_make :: proc(frame_time_ticks: int, frame_count: int, texture: rl.Texture2D, flip_horizontally: bool = false, frame_scaling_factor: [2]f32 = {1,1}) -> Animation {
+    anim: Animation
+    anim.frame_elapsed_ticks = 0
+    anim.frame_time_ticks = frame_time_ticks
+    anim.frame = 0
+    anim.frame_count = frame_count
+    anim.texture = texture
+    anim.frame_width = f32(anim.texture.width) / f32(anim.frame_count)
+    anim.flip_horizontally_by_default = flip_horizontally
+    anim.scaling = frame_scaling_factor
+    return anim
 }
 
 animation_tick :: proc(using animation: ^Animation) {
+    if animation.frame_count == 0 {
+        return
+    }
+
     frame_elapsed_ticks += 1
     if frame_elapsed_ticks >= frame_time_ticks {
         frame_elapsed_ticks = 0
@@ -527,10 +524,16 @@ animation_tick :: proc(using animation: ^Animation) {
     }
 }
 
-animation_draw :: proc(using animation: Animation, dest_rec: rl.Rectangle, flip_horizontal: bool) {
+animation_draw :: proc(using animation: Animation, center_pos: [2]f32, flip_horizontal: bool) {
     frame_pos := [2]f32{ f32(frame) * frame_width, 0 }
     frame_dim := [2]f32{ frame_width, f32(texture.height) }
     if flip_horizontal { frame_dim.x = -frame_dim.x }
+    if flip_horizontally_by_default { frame_dim.x = -frame_dim.x } // TODO: this kinda cringe?
     frame_rec := to_rec(frame_pos, frame_dim)
+
+    dest_rec_dim := [2]f32{75,75} * scaling
+    dest_rec_pos := center_pos - dest_rec_dim/2
+    dest_rec := to_rec(dest_rec_pos, dest_rec_dim)
+
     rl.DrawTexturePro(texture, frame_rec, dest_rec, {}, 0, rl.WHITE)
 }
