@@ -98,9 +98,10 @@ make_enemy :: proc(enemy_type: Enemy_Type, pos: [2]f32) -> Entity {
         }
         case .Zombie: {
             enemy.dim = {40,75}
-            enemy.max_move_speed = 50
+            enemy.max_move_speed = 100
             enemy.health = 150
             enemy.color = rl.GREEN
+            enemy.animation = animation_make(10, 8, get_texture("zombie"), false, {1.25,1.5})
         }
         case .Strong_Bat: {
             enemy.dim = {50,50}

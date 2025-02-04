@@ -24,6 +24,7 @@ load_textures :: proc() {
     load_texture("res/textures/skeleton.png", "skeleton")
     load_texture("res/textures/bat.png", "bat")
     load_texture("res/textures/strong_bat.png", "strong_bat")
+    load_texture("res/textures/zombie.png", "zombie")
 }
 
 get_texture :: proc(name: string) -> rl.Texture2D {
