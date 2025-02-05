@@ -14,27 +14,7 @@ Weapon :: union {
 weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone)) {
     switch &w in weapon {
 
-        case Whip: {
-            w.remaining_ticks -= 1
-            if w.remaining_ticks <= 0 {
-                dz := pool_get(damage_zones^, w.dz)
-                if w.is_cooling_down {
-                    // was cooling down, going to attack
-                    w.remaining_ticks = WHIP_LIFETIME
-                    dz.is_active = true
-                    dz.pos = player.pos + player.dim/2
-                    if player.facing_dir.x < 0 {
-                        dz.pos.x -= dz.dim.x
-                    }
-                }
-                else {
-                    // was attacking, going to cooldown
-                    w.remaining_ticks = WHIP_COOLDOWN
-                    dz.is_active = false
-                }
-                w.is_cooling_down = !w.is_cooling_down // flip state
-            }
-        }
+        case Whip: { whip_tick(&w, player) }
 
         case Bibles: { bibles_tick(&w, player) }
 
@@ -87,6 +67,7 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
 weapon_draw :: proc(weapon: Weapon, player: Player) {
     #partial switch w in weapon {
         case Bibles: { bibles_draw(w, player) }
+        case Whip: { whip_draw(w) }
         case: {}
     }
 }
@@ -95,6 +76,7 @@ Whip :: struct {
     dz: Pool_Handle(Damage_Zone),
     remaining_ticks: int,
     is_cooling_down: bool, // if false => executing attack
+    emitter: Particle_Emitter, // emits the "slash"
 }
 
 WHIP_COOLDOWN :: 100
@@ -107,7 +89,40 @@ make_whip :: proc(damage_zones: ^Pool(Damage_Zone)) -> Whip {
     dz.color = rl.PINK
     dz.is_active = false
     dz_handle := pool_add(damage_zones, dz)
-    return {dz_handle, WHIP_COOLDOWN, true}
+    emitter: Particle_Emitter
+    color := [3]f32{1,1,1}
+    particle_emitter_init(&emitter, get_texture("slash"), color, color, 60, int(f32(WHIP_LIFETIME) * 4), {7,3})
+    return {dz_handle, WHIP_COOLDOWN, true, emitter}
+}
+
+whip_tick :: proc(w: ^Whip, player: Player) {
+    w.remaining_ticks -= 1
+    if w.remaining_ticks <= 0 {
+        dz := pool_get(w.dz)
+        if w.is_cooling_down {
+            // was cooling down, going to attack
+            w.remaining_ticks = WHIP_LIFETIME
+            dz.is_active = true
+            dz.pos.x = player.pos.x + player.dim.x
+            dz.pos.y = player.pos.y + player.dim.y/4
+            if player.facing_dir.x < 0 {
+                dz.pos.x -= dz.dim.x+ player.dim.x
+            }
+            particle_emitter_emit(&w.emitter, get_center(dz.pos, dz.dim), player.facing_dir, flip_x=player.facing_dir.x < 0)
+        }
+        else {
+            // was attacking, going to cooldown
+            w.remaining_ticks = WHIP_COOLDOWN
+            dz.is_active = false
+        }
+        w.is_cooling_down = !w.is_cooling_down // flip state
+    }
+
+    particle_emitter_tick(&w.emitter)
+}
+
+whip_draw :: proc(w: Whip) {
+    particle_emitter_draw(w.emitter)
 }
 
 Bibles :: struct {
@@ -139,7 +154,7 @@ make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     page_emitter: Particle_Emitter
     start_color := [3]f32{1, 0, 1}
     end_color := [3]f32{1, 0, 0}
-    particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, 0.8)
+    particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, {0.8,0.8})
 
     return {bibles, BIBLES_COOLDOWN, true, page_emitter}
 }

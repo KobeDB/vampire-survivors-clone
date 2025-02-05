@@ -7,7 +7,8 @@ Particle :: struct {
     velocity: [2]f32,
     rotation: f32,
     lifetime: int,
-    scaling: f32,
+    scaling: [2]f32,
+    flip_x: bool,
     alpha: f32,
     color: [3]f32,
 }
@@ -16,12 +17,12 @@ Particle_Emitter :: struct {
     particles: Pool(Particle),
     texture: rl.Texture2D,
     particle_lifetime: int,
-    scaling: f32,
+    scaling: [2]f32,
     start_color: [3]f32,
     end_color: [3]f32,
 }
 
-particle_emitter_init :: proc(emitter: ^Particle_Emitter, texture: rl.Texture2D, start_color: [3]f32, end_color: [3]f32, max_particles: int, particle_lifetime: int, scaling: f32) {
+particle_emitter_init :: proc(emitter: ^Particle_Emitter, texture: rl.Texture2D, start_color: [3]f32, end_color: [3]f32, max_particles: int, particle_lifetime: int, scaling: [2]f32) {
     pool_init(&emitter.particles, max_particles)
     emitter.texture = texture
     emitter.particle_lifetime = particle_lifetime
@@ -45,7 +46,7 @@ particle_emitter_tick :: proc(emitter: ^Particle_Emitter) {
     }
 }
 
-particle_emitter_emit :: proc(emitter: ^Particle_Emitter, position: [2]f32, velocity: [2]f32) {
+particle_emitter_emit :: proc(emitter: ^Particle_Emitter, position: [2]f32, velocity: [2]f32, flip_x: bool = false) {
     if pool_size(emitter.particles) == pool_capacity(emitter.particles) {
         return
     }
@@ -56,6 +57,7 @@ particle_emitter_emit :: proc(emitter: ^Particle_Emitter, position: [2]f32, velo
     p.rotation = 0
     p.lifetime = emitter.particle_lifetime
     p.scaling = emitter.scaling
+    p.flip_x = flip_x
     p.alpha = 1
     p.color = emitter.start_color
 
@@ -66,7 +68,9 @@ particle_emitter_draw :: proc(emitter: Particle_Emitter) {
     for i in 0..<len(emitter.particles.slots) {
         particle, _ := pool_index_get(emitter.particles, i) or_continue
 
-        src_rec := to_rec({0,0},{f32(emitter.texture.width), f32(emitter.texture.height)})
+        src_rec_dim := [2]f32{f32(emitter.texture.width), f32(emitter.texture.height)}
+        if particle.flip_x { src_rec_dim.x = -src_rec_dim.x }
+        src_rec := to_rec({0,0}, src_rec_dim)
 
         dest_rec_dim := [2]f32{50,50} * particle.scaling
         dest_rec_pos := particle.position - dest_rec_dim/2
