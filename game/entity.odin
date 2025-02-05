@@ -40,7 +40,7 @@ player_init :: proc(player: ^Player) {
     player.animation = animation_make(10, 6, get_texture("scarfy"), false)
 }
 
-player_tick :: proc(player: ^Player) {
+player_movement :: proc(player: ^Player) {
     move_dir: [2]f32
     if rl.IsKeyDown(.D) {
         move_dir.x += 1

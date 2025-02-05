@@ -17,6 +17,8 @@ Level :: struct {
     wave: Wave,
     camera: rl.Camera2D,
     countdowns: Pool(Countdown),
+    emitter: Particle_Emitter,
+    emitter_countdown: Pool_Handle(Countdown),
 }
 
 MAX_ENEMIES :: 10000
@@ -62,11 +64,16 @@ level_init :: proc(using level: ^Level, screen_dim: [2]f32) {
     camera.offset = {screen_dim.x / 2, screen_dim.y / 2}
     camera.zoom = 1
 
+    // test particles
+    start_color := [3]f32{1, 0, 1}
+    end_color := [3]f32{1, 0, 0}
+    particle_emitter_init(&level.emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 90, 1)
+    emitter_countdown = add_countdown(level, 30)
 }
 
 level_tick :: proc(using level: ^Level) {
 
-    player_tick(&player)
+    player_movement(&player)
 
     // Update camera target to follow player
     camera.target = {player.pos.x + player.dim.x/2 , player.pos.y + player.dim.y/2}
@@ -266,6 +273,17 @@ level_tick :: proc(using level: ^Level) {
     if leveled_up {
         transition_to_game_state(.LEVEL_UP)
     }
+
+    // tick test particles
+    particle_emitter_tick(&emitter)
+    if countdown_expired(pool_get(emitter_countdown)^) {
+        num_particles := int(rand.float32_range(0,10))
+        for _ in 0..<num_particles {
+            emitter_pos := [2]f32{0,0}
+            vel := random_unit_vec() * 50
+            particle_emitter_emit(&emitter, emitter_pos, vel)
+        }
+    }
 }
 
 level_draw :: proc(using level: Level) {
@@ -296,7 +314,13 @@ level_draw :: proc(using level: Level) {
         for i in 0..<len(damage_zones.slots) {
             dz, _ := pool_index_get(damage_zones, i) or_continue
             if !dz.is_active { continue }
-            rl.DrawRectangleRec(to_rec(dz.pos,dz.dim), dz.color)
+            rl.DrawRectangleLinesEx(to_rec(dz.pos,dz.dim), 2, dz.color)
+        }
+
+        // Draw weapons
+        for i in 0..<len(weapons.slots) {
+            weapon, _ := pool_index_get(weapons, i) or_continue
+            weapon_draw(weapon^, player)
         }
 
         // // Draw test rectangle
@@ -323,6 +347,9 @@ level_draw :: proc(using level: Level) {
             rl.DrawText(rl.TextFormat("%d", indicator.damage), i32(indicator.pos.x), i32(indicator.pos.y), 20, rl.WHITE)
         }
 
+        // Draw test particles
+        particle_emitter_draw(emitter)
+
     rl.EndMode2D()
 
     // Draw wave number
@@ -331,6 +358,10 @@ level_draw :: proc(using level: Level) {
     // Draw number of living enemies
     rl.DrawText(rl.TextFormat("Enemies left: %d", pool_size(enemies)), rl.GetScreenWidth() - 200, 100, 22, rl.GREEN)
 
+}
+
+add_countdown :: proc(level: ^Level, interval: int) -> Pool_Handle(Countdown) {
+    return pool_add(&level.countdowns, make_countdown(interval))
 }
 
 Countdown :: struct {

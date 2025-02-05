@@ -104,3 +104,7 @@ pool_is_free_index :: proc(pool: Pool($T), index: int) -> bool {
 pool_size :: proc(pool: Pool($T)) -> int {
     return pool.free_stack_top
 }
+
+pool_capacity :: proc(pool: Pool($T)) -> int {
+    return len(pool.slots)
+}

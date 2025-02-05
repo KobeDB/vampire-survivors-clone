@@ -126,7 +126,14 @@ main :: proc() {
     }
 }
 
-
+to_color :: proc(color: [3]f32) -> rl.Color {
+    result: rl.Color
+    result.r = u8(color.r * 255)
+    result.g = u8(color.g * 255)
+    result.b = u8(color.b * 255)
+    result.a = 255
+    return result
+}
 
 to_rec :: proc(pos: [2]f32, dim: [2]f32) -> rl.Rectangle {
     return {pos.x, pos.y, dim.x, dim.y}

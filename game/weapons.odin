@@ -2,6 +2,8 @@ package game
 
 import rl "vendor:raylib"
 import "core:math"
+import "core:math/linalg"
+import "core:math/rand"
 
 Weapon :: union {
     Whip,
@@ -34,24 +36,7 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
             }
         }
 
-        case Bibles: {
-            w.remaining_ticks -= 1
-            if w.remaining_ticks <= 0 {
-                for i in 0..<len(w.bibles) {
-                    bible_handle := w.bibles[i]
-                    bible := pool_get(damage_zones^, bible_handle)
-                    bible.is_active = w.is_cooling_down
-                }
-                w.remaining_ticks = BIBLES_LIFETIME if w.is_cooling_down else BIBLES_COOLDOWN
-                w.is_cooling_down = !w.is_cooling_down // flip state
-            }
-
-            for i in 0..<len(w.bibles) {
-                bible_handle := w.bibles[i]
-                bible := pool_get(damage_zones^, bible_handle)
-                bible.pos = calc_bible_center_pos(i, player.pos, len(w.bibles), w.remaining_ticks)
-            }
-        }
+        case Bibles: { bibles_tick(&w, player) }
 
         case Magic_Wand: {
             // tick the projectiles
@@ -99,6 +84,13 @@ weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_
     }
 }
 
+weapon_draw :: proc(weapon: Weapon, player: Player) {
+    #partial switch w in weapon {
+        case Bibles: { bibles_draw(w, player) }
+        case: {}
+    }
+}
+
 Whip :: struct {
     dz: Pool_Handle(Damage_Zone),
     remaining_ticks: int,
@@ -122,13 +114,15 @@ Bibles :: struct {
     bibles: [3]Pool_Handle(Damage_Zone),
     remaining_ticks: int,
     is_cooling_down: bool, // if false => executing attack
+    page_emitter: Particle_Emitter,
 }
 
 BIBLES_LIFETIME :: 500
 BIBLES_COOLDOWN :: 200
 BIBLES_REVOLUTIONS :: 3
-BIBLES_RADIUS :: 200
+BIBLES_RADIUS :: 100
 BIBLES_DAMAGE :: 80
+BIBLES_MAX_PARTICLES :: 1000
 
 make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     bibles: [3]Pool_Handle(Damage_Zone)
@@ -141,7 +135,13 @@ make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
         bible_handle := pool_add(damage_zones, bible)
         bibles[i] = bible_handle
     }
-    return {bibles, BIBLES_COOLDOWN, true}
+
+    page_emitter: Particle_Emitter
+    start_color := [3]f32{1, 0, 1}
+    end_color := [3]f32{1, 0, 0}
+    particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, 0.8)
+
+    return {bibles, BIBLES_COOLDOWN, true, page_emitter}
 }
 
 calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int, remaining_lifetime: int) -> [2]f32 {
@@ -152,6 +152,59 @@ calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int,
     bible_center_on_unit_circle := [2]f32{math.cos(bible_angle), math.sin(bible_angle)}
     bible_center := bible_center_on_unit_circle * BIBLES_RADIUS + orbit_center
     return bible_center
+}
+
+bibles_tick :: proc(bibles: ^Bibles, player: Player) {
+    bibles.remaining_ticks -= 1
+    if bibles.remaining_ticks <= 0 {
+        for i in 0..<len(bibles.bibles) {
+            bible_handle := bibles.bibles[i]
+            bible := pool_get(bible_handle)
+            bible.is_active = bibles.is_cooling_down
+        }
+        bibles.remaining_ticks = BIBLES_LIFETIME if bibles.is_cooling_down else BIBLES_COOLDOWN
+        bibles.is_cooling_down = !bibles.is_cooling_down // flip state
+    }
+
+    // Move bible damage zones
+    for i in 0..<len(bibles.bibles) {
+        bible_handle := bibles.bibles[i]
+        bible := pool_get(bible_handle)
+        bible.pos = calc_bible_center_pos(i, get_center(player.pos,player.dim), len(bibles.bibles), bibles.remaining_ticks) - bible.dim/2
+    }
+
+    // spawn particles
+    if rand.float32() < 0.05 {
+        for i in 0..<len(bibles.bibles) {
+            bible_center := calc_bible_center_pos(i, get_center(player.pos,player.dim), len(bibles.bibles), bibles.remaining_ticks)
+            r := player.pos - bible_center
+            page_velocity := linalg.normalize([2]f32{-r.y, r.x}) * 10
+            particle_emitter_emit(&bibles.page_emitter, bible_center, page_velocity)
+        }
+    }
+
+    particle_emitter_tick(&bibles.page_emitter)
+}
+
+bibles_draw :: proc(bibles: Bibles, player: Player) {
+    if bibles.is_cooling_down { return }
+
+    for i in 0..<len(bibles.bibles) {
+        bible_center := calc_bible_center_pos(i, get_center(player.pos,player.dim), len(bibles.bibles), bibles.remaining_ticks)
+
+        tex := get_texture("bible")
+
+        src_rec := to_rec({0,0},{f32(tex.width), f32(tex.height)})
+
+        dest_rec_dim := [2]f32{50,50}
+        dest_rec_pos := bible_center - dest_rec_dim/2
+        dest_rec := to_rec(dest_rec_pos, dest_rec_dim)
+
+        rl.DrawTexturePro(tex, src_rec, dest_rec, {}, 0, rl.WHITE)
+    }
+
+    // draw particles
+    particle_emitter_draw(bibles.page_emitter)
 }
 
 Magic_Wand :: struct {
