@@ -87,7 +87,7 @@ level_tick :: proc(using level: ^Level) {
     // ----------------------
     for wi in 0..<len(weapons.slots) {
         weapon, _ := pool_index_get(weapons, wi) or_continue
-        weapon_tick(weapon, player, &damage_zones)
+        weapon_tick(weapon, player, &damage_zones, enemies)
     }
 
     // Potentially spawn enemies

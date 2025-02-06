@@ -4,6 +4,7 @@ import rl "vendor:raylib"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
+import "core:slice"
 
 Weapon :: union {
     Whip,
@@ -11,11 +12,11 @@ Weapon :: union {
     Magic_Wand,
 }
 
-weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone)) {
+weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
     switch &w in weapon {
         case Whip: { whip_tick(&w, player) }
         case Bibles: { bibles_tick(&w, player) }
-        case Magic_Wand: { magic_wand_tick(&w, player, damage_zones) }
+        case Magic_Wand: { magic_wand_tick(&w, player, damage_zones, enemies) }
     }
 }
 
@@ -215,7 +216,7 @@ make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     return result
 }
 
-magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Damage_Zone)) {
+magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
     // tick the projectiles
     for pi in 0..<len(w.projectiles.slots) {
         projectile, _ := pool_index_get(w.projectiles, pi) or_continue
@@ -240,6 +241,24 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
         }
     }
 
+    Enemy_Distance :: struct {
+        enemy_pool_index: int,
+        dist: f32,
+        health: f32,
+    }
+    enemy_distances := make([dynamic]Enemy_Distance, context.temp_allocator)
+    for i in 0..<len(enemies.slots) {
+        e, _ := pool_index_get(enemies, i) or_continue
+        if e.health <= 0 { continue } // NOTE: Probably redundant check, keep anyway for robustness
+        dist := linalg.length(get_center(e.pos,e.dim) - get_center(player.pos,player.dim))
+        append(&enemy_distances, Enemy_Distance{i, dist, e.health})
+    }
+
+    less_func :: proc(ed0, ed1: Enemy_Distance) -> bool { return ed0.dist < ed1.dist }
+    slice.sort_by(enemy_distances[:], less_func)
+
+    targeted_enemy := 0 // index in enemy_distances
+
     w.remaining_ticks -= 1
     if w.remaining_ticks <= 0 {
         for i in 0..<w.num_projectiles_to_fire {
@@ -255,8 +274,23 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
             projectile.dz = dz_handle
             projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
             projectile.health = 1
-            // TODO: Shoot at nearest enemy instead of random direction
-            projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
+
+            // Go to next nearest enemy if currently targeted enemy would be dead
+            // because of previously fired projectiles
+            for targeted_enemy < len(enemy_distances) && enemy_distances[targeted_enemy].health <= 0 {
+                targeted_enemy += 1
+            }
+
+            if targeted_enemy < len(enemy_distances) {
+                target, _, ok := pool_index_get(enemies, enemy_distances[targeted_enemy].enemy_pool_index)
+                if !ok { panic("magic_wand_tick: getting target enemy from the enemy pool gone horribly wrong!") }
+                projectile.velocity = linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim)) * MAGIC_WAND_PROJECTILE_SPEED
+
+                enemy_distances[targeted_enemy].health -= dz.damage
+            } else {
+                // No enemy target => shoot in random direction
+                projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
+            }
 
             pool_add(&w.projectiles, projectile)
         }
