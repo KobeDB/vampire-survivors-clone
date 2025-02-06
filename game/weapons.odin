@@ -13,62 +13,17 @@ Weapon :: union {
 
 weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone)) {
     switch &w in weapon {
-
         case Whip: { whip_tick(&w, player) }
-
         case Bibles: { bibles_tick(&w, player) }
-
-        case Magic_Wand: {
-            // tick the projectiles
-            for pi in 0..<len(w.projectiles.slots) {
-                projectile, _ := pool_index_get(w.projectiles, pi) or_continue
-                dz := pool_get(damage_zones^, projectile.dz)
-                projectile.lifetime -= 1
-                // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
-                if projectile.lifetime <= 0 || dz.enemy_hit_count >= projectile.health {
-                    // first free the projectile's Damage_Zone
-                    pool_free(damage_zones, projectile.dz)
-                    // free the projectile itself
-                    pool_index_free(&w.projectiles, pi)
-                }
-                else {
-                    // Update projectile's movement
-                    dz.pos += projectile.velocity * TICK_TIME
-                }
-            }
-
-            w.remaining_ticks -= 1
-            if w.remaining_ticks <= 0 {
-                for i in 0..<w.num_projectiles_to_fire {
-                    dz: Damage_Zone
-                    dz.pos = player.pos
-                    dz.dim = {20,20}
-                    dz.damage = MAGIC_WAND_DAMAGE
-                    dz.color = rl.SKYBLUE
-                    dz.is_active = true
-                    dz_handle := pool_add(damage_zones, dz)
-
-                    projectile: Magic_Wand_Projectile
-                    projectile.dz = dz_handle
-                    projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
-                    projectile.health = 1
-                    // TODO: Shoot at nearest enemy instead of random direction
-                    projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
-
-                    pool_add(&w.projectiles, projectile)
-                }
-                w.remaining_ticks = MAGIC_WAND_COOLDOWN
-            }
-
-        }
+        case Magic_Wand: { magic_wand_tick(&w, player, damage_zones) }
     }
 }
 
 weapon_draw :: proc(weapon: Weapon, player: Player) {
-    #partial switch w in weapon {
+    switch w in weapon {
         case Bibles: { bibles_draw(w, player) }
         case Whip: { whip_draw(w) }
-        case: {}
+        case Magic_Wand: { magic_wand_draw(w) }
     }
 }
 
@@ -226,6 +181,7 @@ Magic_Wand :: struct {
     projectiles: Pool(Magic_Wand_Projectile),
     remaining_ticks: int, // remaining ticks until shooting new projectiles
     num_projectiles_to_fire: int,
+    emitter: Particle_Emitter,
 }
 
 Magic_Wand_Projectile :: struct {
@@ -247,5 +203,70 @@ make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
     result.num_projectiles_to_fire = MAGIC_WAND_DEFAULT_NUM_PROJECTILES
+
+    particle_tex := get_texture("flare")
+    start_color := [3]f32{0,0,1}
+    end_color := [3]f32{0,1,1}
+    max_particles := 1000
+    particle_lifetime := 100
+    scaling := [2]f32{1,1}
+    particle_emitter_init(&result.emitter, particle_tex, start_color, end_color, max_particles, particle_lifetime, scaling)
+
     return result
+}
+
+magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Damage_Zone)) {
+    // tick the projectiles
+    for pi in 0..<len(w.projectiles.slots) {
+        projectile, _ := pool_index_get(w.projectiles, pi) or_continue
+        dz := pool_get(projectile.dz)
+        projectile.lifetime -= 1
+        // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
+        if projectile.lifetime <= 0 || dz.enemy_hit_count >= projectile.health {
+            // first free the projectile's Damage_Zone
+            pool_free(projectile.dz)
+            // free the projectile itself
+            pool_index_free(&w.projectiles, pi)
+        }
+        else {
+            // Update projectile's movement
+            dz.pos += projectile.velocity * TICK_TIME
+        }
+
+        // emit trail particles
+        emit_interval := int(f32(MAGIC_WAND_PROJECTILE_LIFETIME) / 100)
+        if projectile.lifetime % emit_interval == 0 {
+            particle_emitter_emit(&w.emitter, get_center(dz.pos, dz.dim), 0)
+        }
+    }
+
+    w.remaining_ticks -= 1
+    if w.remaining_ticks <= 0 {
+        for i in 0..<w.num_projectiles_to_fire {
+            dz: Damage_Zone
+            dz.pos = player.pos
+            dz.dim = {20,20}
+            dz.damage = MAGIC_WAND_DAMAGE
+            dz.color = rl.SKYBLUE
+            dz.is_active = true
+            dz_handle := pool_add(damage_zones, dz)
+
+            projectile: Magic_Wand_Projectile
+            projectile.dz = dz_handle
+            projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
+            projectile.health = 1
+            // TODO: Shoot at nearest enemy instead of random direction
+            projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
+
+            pool_add(&w.projectiles, projectile)
+        }
+        w.remaining_ticks = MAGIC_WAND_COOLDOWN
+    }
+
+    // tick particles
+    particle_emitter_tick(&w.emitter)
+}
+
+magic_wand_draw :: proc(w: Magic_Wand) {
+    particle_emitter_draw(w.emitter)
 }

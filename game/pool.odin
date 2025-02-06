@@ -85,10 +85,16 @@ pool_get_handle_from_index :: proc(pool: ^Pool($T), index: int) -> Pool_Handle(T
     return {index=index, generation=pool.generations[index], pool=pool}
 }
 
-pool_free :: proc(pool: ^Pool($T), handle: Pool_Handle(T)) {
+_pool_free :: proc(pool: ^Pool($T), handle: Pool_Handle(T)) {
     crash_on_invalid_handle(pool^, handle)
     pool_index_free(pool, handle.index)
 }
+
+pool_handle_free :: proc(handle: Pool_Handle($T)) {
+    pool_free(handle.pool, handle)
+}
+
+pool_free :: proc{_pool_free, pool_handle_free}
 
 pool_index_free :: proc(pool: ^Pool($T), index: int) {
     pool.is_occupied[index] = false
