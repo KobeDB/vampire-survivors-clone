@@ -182,6 +182,12 @@ level_tick :: proc(using level: ^Level) {
         for dzi in 0..<len(damage_zones.slots) {
             dz, gen := pool_index_get(damage_zones, dzi) or_continue
             if !dz.is_active { continue }
+
+            // If enemy is already dead (because of prev damage zones) then don't register collisions anymore
+            if e.health <= 0 {
+                break
+            }
+
             in_zone := aabb_collision_check(e.pos, e.dim, dz.pos, dz.dim)
             if in_zone {
                 zone_handle := pool_get_handle_from_index(&damage_zones, dzi)

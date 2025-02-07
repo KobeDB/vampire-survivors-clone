@@ -279,23 +279,7 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
     }
 
     if w.on_attack_event {
-        Enemy_Distance :: struct {
-            enemy_pool_index: int,
-            dist: f32,
-            health: f32,
-        }
-
-        enemy_distances := make([dynamic]Enemy_Distance, context.temp_allocator)
-
-        for i in 0..<len(enemies.slots) {
-            e, _ := pool_index_get(enemies, i) or_continue
-            if e.health <= 0 { continue } // NOTE: Probably redundant check, keep anyway for robustness
-            dist := linalg.length(get_center(e.pos,e.dim) - get_center(player.pos,player.dim))
-            append(&enemy_distances, Enemy_Distance{i, dist, e.health})
-        }
-
-        less_func :: proc(ed0, ed1: Enemy_Distance) -> bool { return ed0.dist < ed1.dist }
-        slice.sort_by(enemy_distances[:], less_func)
+        enemy_distances := find_nearest_enemies(player, enemies)
 
         targeted_enemy := 0 // index in enemy_distances
 
@@ -340,4 +324,39 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
 
 magic_wand_draw :: proc(w: ^Magic_Wand) {
     particle_emitter_draw(w.emitter)
+}
+
+// NOTE: Allocates on context.temp_allocator
+// Returns a sorted array of the nearest enemies from closest to farthest
+find_nearest_enemies :: proc(player: Player, enemies: Pool(Entity)) -> []Enemy_Distance_Pair {
+    enemy_distances := make([dynamic]Enemy_Distance_Pair, context.temp_allocator)
+
+    for i in 0..<len(enemies.slots) {
+        e, _ := pool_index_get(enemies, i) or_continue
+        if e.health <= 0 { continue } // NOTE: Probably redundant check, keep anyway for robustness
+        dist := linalg.length(get_center(e.pos,e.dim) - get_center(player.pos,player.dim))
+        append(&enemy_distances, Enemy_Distance_Pair{i, dist, e.health})
+    }
+
+    less_func :: proc(ed0, ed1: Enemy_Distance_Pair) -> bool { return ed0.dist < ed1.dist }
+    slice.sort_by(enemy_distances[:], less_func)
+    return enemy_distances[:]
+}
+Enemy_Distance_Pair :: struct {
+    enemy_pool_index: int,
+    dist: f32,
+    health: f32,
+}
+
+Cross :: struct {
+    using base: Weapon,
+    projectiles: Cross_Projectile,
+    emitter: Particle_Emitter,
+}
+
+Cross_Projectile :: struct {
+    dz: Pool_Handle(Damage_Zone),
+    lifetime: int,
+    velocity: [2]f32,
+    health: int, // The maximum amount of enemies that can be hit by this projectile
 }
