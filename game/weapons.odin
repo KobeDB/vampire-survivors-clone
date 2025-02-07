@@ -22,6 +22,7 @@ Weapon_Union :: union {
     Whip,
     Bibles,
     Magic_Wand,
+    Cross,
 }
 
 weapon_tick :: proc(using weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
@@ -40,6 +41,7 @@ weapon_tick :: proc(using weapon: ^Weapon, player: Player, damage_zones: ^Pool(D
         case Whip: { whip_tick((^Whip)(weapon), player) }
         case Bibles: { bibles_tick((^Bibles)(weapon), player) }
         case Magic_Wand: { magic_wand_tick((^Magic_Wand)(weapon), player, damage_zones, enemies) }
+        case Cross: { cross_tick((^Cross)(weapon), player, enemies, damage_zones) }
         case: { fmt.eprintln("unhandled weapon tick") }
     }
 
@@ -52,6 +54,7 @@ weapon_draw :: proc(using weapon: ^Weapon, player: Player) {
         case Whip: { whip_draw((^Whip)(weapon)) }
         case Bibles: { bibles_draw((^Bibles)(weapon), player) }
         case Magic_Wand: { magic_wand_draw((^Magic_Wand)(weapon)) }
+        case Cross: { cross_draw((^Cross)(weapon)) }
         case: { fmt.eprintln("unhandled weapon draw") }
     }
 }
@@ -75,7 +78,7 @@ make_whip :: proc(damage_zones: ^Pool(Damage_Zone)) -> Whip {
 
     emitter: Particle_Emitter
     color := [3]f32{1,1,1}
-    particle_emitter_init(&emitter, get_texture("slash"), color, color, 60, int(f32(WHIP_LIFETIME) * 4), {7,3})
+    particle_emitter_init(&emitter, get_texture("slash"), color, color, 60, int(f32(WHIP_LIFETIME) * 4), [2]f32{7,3})
 
     result: Whip
     result.weapon_type = Whip
@@ -139,7 +142,7 @@ make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     page_emitter: Particle_Emitter
     start_color := [3]f32{1, 0, 1}
     end_color := [3]f32{1, 0, 0}
-    particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, {0.8,0.8})
+    particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, [2]f32{0.8,0.8})
 
     result: Bibles
     result.weapon_type = Bibles
@@ -350,13 +353,136 @@ Enemy_Distance_Pair :: struct {
 
 Cross :: struct {
     using base: Weapon,
-    projectiles: Cross_Projectile,
+    projectiles: Pool(Cross_Projectile),
+    ticks_until_next_fire: int,
+    pending_projectiles: int,
     emitter: Particle_Emitter,
 }
+
+CROSS_PROJECTILE_COUNT :: 2
+CROSS_MAX_PROJECTILES :: 100
+CROSS_TICKS_BETWEEN_SHOTS :: 5
+CROSS_PROJECTILE_SPEED :: 250
+CROSS_PROJECTILE_LIFETIME :: 360
+CROSS_PROJECTILE_DAMAGE :: 1000
+CROSS_COOLDOWN :: 200
 
 Cross_Projectile :: struct {
     dz: Pool_Handle(Damage_Zone),
     lifetime: int,
     velocity: [2]f32,
-    health: int, // The maximum amount of enemies that can be hit by this projectile
+    initial_direction: [2]f32,
+    rotation: f32,
+}
+
+make_cross :: proc(damage_zones: ^Pool(Damage_Zone)) -> Cross {
+    result: Cross
+
+    result.weapon_type = Cross
+    result.cooldown_time = CROSS_COOLDOWN
+    result.attack_time = (CROSS_PROJECTILE_COUNT-1) * CROSS_TICKS_BETWEEN_SHOTS
+
+    pool_init(&result.projectiles, CROSS_MAX_PROJECTILES)
+
+    result.pending_projectiles = 0
+
+    emitter_info: Particle_Emitter_Init_Info
+    emitter_info.start_color = [3]f32{1,1,0}
+    emitter_info.end_color = emitter_info.start_color
+    emitter_info.scaling = [2]f32{2,2}
+    emitter_info.particle_lifetime = 20
+    particle_emitter_init(&result.emitter, get_texture("cross"), emitter_info)
+
+    return result
+}
+
+cross_tick :: proc(cross: ^Cross, player: Player, enemies: Pool(Entity), damage_zones: ^Pool(Damage_Zone)) {
+    if cross.on_attack_event {
+        cross.pending_projectiles = CROSS_PROJECTILE_COUNT
+    }
+
+    cross.ticks_until_next_fire -= 1
+
+    if cross.pending_projectiles > 0 && cross.ticks_until_next_fire <= 0 {
+        cross.pending_projectiles -= 1
+        cross.ticks_until_next_fire = CROSS_TICKS_BETWEEN_SHOTS
+
+        // Fire a single cross
+        enemy_distances := find_nearest_enemies(player, enemies)
+        proj_vel := [2]f32{}
+        if len(enemy_distances) != 0 {
+            target, _, ok := pool_index_get(enemies, enemy_distances[0].enemy_pool_index)
+            to_nearest_enemy := linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim))
+            proj_vel = to_nearest_enemy * CROSS_PROJECTILE_SPEED
+        }
+        else {
+            proj_vel = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
+        }
+
+        dz: Damage_Zone
+        dz.pos = player.pos
+        dz.dim = {50,50}
+        dz.damage = CROSS_PROJECTILE_DAMAGE
+        dz.color = rl.BLUE
+        dz.is_active = true
+
+        proj: Cross_Projectile
+        proj.dz = pool_add(damage_zones, dz)
+        proj.lifetime = CROSS_PROJECTILE_LIFETIME
+        proj.velocity = proj_vel
+        proj.initial_direction = linalg.normalize(proj.velocity)
+
+        pool_add(&cross.projectiles, proj)
+    }
+
+    // tick projectiles
+    for pi in 0..<len(cross.projectiles.slots) {
+        projectile, _ := pool_index_get(cross.projectiles, pi) or_continue
+        dz := pool_get(projectile.dz)
+        projectile.lifetime -= 1
+        // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
+        if projectile.lifetime <= 0 {
+            // first free the projectile's Damage_Zone
+            pool_free(projectile.dz)
+            // free the projectile itself
+            pool_index_free(&cross.projectiles, pi)
+        }
+        else {
+            // Update projectile's movement
+            projectile.velocity += -500 * projectile.initial_direction * TICK_TIME // backwards acceleration for "boomerang" effect
+            dz.pos += projectile.velocity * TICK_TIME
+            projectile.rotation += 200 * TICK_TIME
+        }
+
+        // emit trail particles
+        emit_interval := 10
+        if projectile.lifetime % emit_interval == 0 {
+            info: Emit_Info
+            info.position = get_center(dz.pos, dz.dim)
+            info.rotation_speed = 200
+            particle_emitter_emit(&cross.emitter, info)
+        }
+    }
+
+    particle_emitter_tick(&cross.emitter)
+}
+
+cross_draw :: proc(cross: ^Cross) {
+    particle_emitter_draw(cross.emitter)
+
+    // draw cross projectiles themselves
+    for pi in 0..<len(cross.projectiles.slots) {
+        projectile, _ := pool_index_get(cross.projectiles, pi) or_continue
+        dz := pool_get(projectile.dz)
+
+        src_rec_dim := [2]f32{f32(cross.emitter.texture.width), f32(cross.emitter.texture.height)}
+        src_rec := to_rec({0,0}, src_rec_dim)
+
+        dest_rec_dim := [2]f32{100,100}
+        dest_rec := to_rec(get_center(dz.pos, dz.dim), dest_rec_dim)
+
+        origin := dest_rec_dim / 2
+
+        rl.DrawTexturePro(cross.emitter.texture, src_rec, dest_rec, origin, projectile.rotation, rl.WHITE)
+    }
 }

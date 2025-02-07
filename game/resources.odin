@@ -28,6 +28,7 @@ load_textures :: proc() {
     load_texture("res/textures/bible.png", "bible")
     load_texture("res/textures/slash.png", "slash")
     load_texture("res/textures/flare.png", "flare")
+    load_texture("res/textures/cross.png", "cross")
 }
 
 get_texture :: proc(name: string) -> rl.Texture2D {

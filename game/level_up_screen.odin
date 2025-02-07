@@ -40,6 +40,8 @@ level_up_screen_tick :: proc(level_up_screen: ^Level_Up_Screen, level: ^Level) {
                 case Whip:     { pool_add(&level.weapons, make_whip(&level.damage_zones)) }
                 case Bibles:   { pool_add(&level.weapons, make_bibles(&level.damage_zones)) }
                 case Magic_Wand:   { pool_add(&level.weapons, make_magic_wand(&level.damage_zones)) }
+                case Cross: { pool_add(&level.weapons, make_cross(&level.damage_zones)) }
+                case: { fmt.eprintln("Unhandled weapon in level up screen") }
             }
         }
 
