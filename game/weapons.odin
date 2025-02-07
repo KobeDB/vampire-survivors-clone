@@ -5,33 +5,60 @@ import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
 import "core:slice"
+import "core:fmt"
 
-Weapon :: union {
+// Weapon base struct
+Weapon :: struct {
+    weapon_type: typeid,
+    remaining_ticks: int,
+    is_cooling_down: bool, // if false => executing attack
+    cooldown_time: int,
+    attack_time: int,
+    on_attack_event: bool, // if true => this tick started an attack
+}
+
+// !IMPORTANT!: All members of this union *must* derive from Weapon_Base
+Weapon_Union :: union {
     Whip,
     Bibles,
     Magic_Wand,
 }
 
-weapon_tick :: proc(weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
-    switch &w in weapon {
-        case Whip: { whip_tick(&w, player) }
-        case Bibles: { bibles_tick(&w, player) }
-        case Magic_Wand: { magic_wand_tick(&w, player, damage_zones, enemies) }
+weapon_tick :: proc(using weapon: ^Weapon, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
+    remaining_ticks -= 1
+    if remaining_ticks <= 0 {
+        if is_cooling_down {
+            // Was cooling down, going to attack
+            on_attack_event = true
+        }
+        remaining_ticks = attack_time if is_cooling_down else cooldown_time
+        is_cooling_down = !is_cooling_down // flip state
     }
+
+    // Call derived Weapons' ticks
+    switch weapon_type {
+        case Whip: { whip_tick((^Whip)(weapon), player) }
+        case Bibles: { bibles_tick((^Bibles)(weapon), player) }
+        case Magic_Wand: { magic_wand_tick((^Magic_Wand)(weapon), player, damage_zones, enemies) }
+        case: { fmt.eprintln("unhandled weapon tick") }
+    }
+
+    // Turn off on-attack event
+    weapon.on_attack_event = false
 }
 
-weapon_draw :: proc(weapon: Weapon, player: Player) {
-    switch w in weapon {
-        case Bibles: { bibles_draw(w, player) }
-        case Whip: { whip_draw(w) }
-        case Magic_Wand: { magic_wand_draw(w) }
+weapon_draw :: proc(using weapon: ^Weapon, player: Player) {
+    switch weapon_type {
+        case Whip: { whip_draw((^Whip)(weapon)) }
+        case Bibles: { bibles_draw((^Bibles)(weapon), player) }
+        case Magic_Wand: { magic_wand_draw((^Magic_Wand)(weapon)) }
+        case: { fmt.eprintln("unhandled weapon draw") }
     }
 }
 
 Whip :: struct {
+    using base: Weapon,
     dz: Pool_Handle(Damage_Zone),
-    remaining_ticks: int,
-    is_cooling_down: bool, // if false => executing attack
     emitter: Particle_Emitter, // emits the "slash"
 }
 
@@ -45,46 +72,48 @@ make_whip :: proc(damage_zones: ^Pool(Damage_Zone)) -> Whip {
     dz.color = rl.PINK
     dz.is_active = false
     dz_handle := pool_add(damage_zones, dz)
+
     emitter: Particle_Emitter
     color := [3]f32{1,1,1}
     particle_emitter_init(&emitter, get_texture("slash"), color, color, 60, int(f32(WHIP_LIFETIME) * 4), {7,3})
-    return {dz_handle, WHIP_COOLDOWN, true, emitter}
+
+    result: Whip
+    result.weapon_type = Whip
+    result.cooldown_time = WHIP_COOLDOWN
+    result.attack_time = WHIP_LIFETIME
+    result.dz = dz_handle
+    result.emitter = emitter
+
+    return result
 }
 
 whip_tick :: proc(w: ^Whip, player: Player) {
-    w.remaining_ticks -= 1
-    if w.remaining_ticks <= 0 {
-        dz := pool_get(w.dz)
-        if w.is_cooling_down {
-            // was cooling down, going to attack
-            w.remaining_ticks = WHIP_LIFETIME
-            dz.is_active = true
-            dz.pos.x = player.pos.x + player.dim.x
-            dz.pos.y = player.pos.y + player.dim.y/4
-            if player.facing_dir.x < 0 {
-                dz.pos.x -= dz.dim.x+ player.dim.x
-            }
-            particle_emitter_emit(&w.emitter, get_center(dz.pos, dz.dim), player.facing_dir, flip_x=player.facing_dir.x < 0)
+    dz := pool_get(w.dz)
+
+    if w.on_attack_event {
+        dz.is_active = true
+        dz.pos.x = player.pos.x + player.dim.x
+        dz.pos.y = player.pos.y + player.dim.y/4
+        if player.facing_dir.x < 0 {
+            dz.pos.x -= dz.dim.x+ player.dim.x
         }
-        else {
-            // was attacking, going to cooldown
-            w.remaining_ticks = WHIP_COOLDOWN
-            dz.is_active = false
-        }
-        w.is_cooling_down = !w.is_cooling_down // flip state
+        particle_emitter_emit(&w.emitter, get_center(dz.pos, dz.dim), player.facing_dir, flip_x=player.facing_dir.x < 0)
+    }
+
+    if w.is_cooling_down {
+        dz.is_active = false
     }
 
     particle_emitter_tick(&w.emitter)
 }
 
-whip_draw :: proc(w: Whip) {
+whip_draw :: proc(w: ^Whip) {
     particle_emitter_draw(w.emitter)
 }
 
 Bibles :: struct {
+    using base: Weapon,
     bibles: [3]Pool_Handle(Damage_Zone),
-    remaining_ticks: int,
-    is_cooling_down: bool, // if false => executing attack
     page_emitter: Particle_Emitter,
 }
 
@@ -112,7 +141,14 @@ make_bibles :: proc(damage_zones: ^Pool(Damage_Zone)) -> Bibles {
     end_color := [3]f32{1, 0, 0}
     particle_emitter_init(&page_emitter, get_texture("bible"), start_color, end_color, BIBLES_MAX_PARTICLES, 40, {0.8,0.8})
 
-    return {bibles, BIBLES_COOLDOWN, true, page_emitter}
+    result: Bibles
+    result.weapon_type = Bibles
+    result.cooldown_time = BIBLES_COOLDOWN
+    result.attack_time = BIBLES_LIFETIME
+    result.bibles = bibles
+    result.page_emitter = page_emitter
+
+    return result
 }
 
 calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int, remaining_lifetime: int) -> [2]f32 {
@@ -126,15 +162,11 @@ calc_bible_center_pos :: proc(bible: int, orbit_center: [2]f32, num_bibles: int,
 }
 
 bibles_tick :: proc(bibles: ^Bibles, player: Player) {
-    bibles.remaining_ticks -= 1
-    if bibles.remaining_ticks <= 0 {
-        for i in 0..<len(bibles.bibles) {
-            bible_handle := bibles.bibles[i]
-            bible := pool_get(bible_handle)
-            bible.is_active = bibles.is_cooling_down
-        }
-        bibles.remaining_ticks = BIBLES_LIFETIME if bibles.is_cooling_down else BIBLES_COOLDOWN
-        bibles.is_cooling_down = !bibles.is_cooling_down // flip state
+
+    for i in 0..<len(bibles.bibles) {
+        bible_handle := bibles.bibles[i]
+        bible := pool_get(bible_handle)
+        bible.is_active = !bibles.is_cooling_down
     }
 
     // Move bible damage zones
@@ -157,7 +189,7 @@ bibles_tick :: proc(bibles: ^Bibles, player: Player) {
     particle_emitter_tick(&bibles.page_emitter)
 }
 
-bibles_draw :: proc(bibles: Bibles, player: Player) {
+bibles_draw :: proc(bibles: ^Bibles, player: Player) {
     if bibles.is_cooling_down { return }
 
     for i in 0..<len(bibles.bibles) {
@@ -179,8 +211,8 @@ bibles_draw :: proc(bibles: Bibles, player: Player) {
 }
 
 Magic_Wand :: struct {
+    using base: Weapon,
     projectiles: Pool(Magic_Wand_Projectile),
-    remaining_ticks: int, // remaining ticks until shooting new projectiles
     num_projectiles_to_fire: int,
     emitter: Particle_Emitter,
 }
@@ -201,6 +233,11 @@ MAGIC_WAND_DEFAULT_NUM_PROJECTILES :: 10
 
 make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
+
+    result.weapon_type = Magic_Wand
+    result.cooldown_time = MAGIC_WAND_COOLDOWN
+    result.attack_time = 1 // Right now, the magic wand fires all its projectiles in one tick
+
     pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
     result.remaining_ticks = MAGIC_WAND_COOLDOWN
     result.num_projectiles_to_fire = MAGIC_WAND_DEFAULT_NUM_PROJECTILES
@@ -241,26 +278,27 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
         }
     }
 
-    Enemy_Distance :: struct {
-        enemy_pool_index: int,
-        dist: f32,
-        health: f32,
-    }
-    enemy_distances := make([dynamic]Enemy_Distance, context.temp_allocator)
-    for i in 0..<len(enemies.slots) {
-        e, _ := pool_index_get(enemies, i) or_continue
-        if e.health <= 0 { continue } // NOTE: Probably redundant check, keep anyway for robustness
-        dist := linalg.length(get_center(e.pos,e.dim) - get_center(player.pos,player.dim))
-        append(&enemy_distances, Enemy_Distance{i, dist, e.health})
-    }
+    if w.on_attack_event {
+        Enemy_Distance :: struct {
+            enemy_pool_index: int,
+            dist: f32,
+            health: f32,
+        }
 
-    less_func :: proc(ed0, ed1: Enemy_Distance) -> bool { return ed0.dist < ed1.dist }
-    slice.sort_by(enemy_distances[:], less_func)
+        enemy_distances := make([dynamic]Enemy_Distance, context.temp_allocator)
 
-    targeted_enemy := 0 // index in enemy_distances
+        for i in 0..<len(enemies.slots) {
+            e, _ := pool_index_get(enemies, i) or_continue
+            if e.health <= 0 { continue } // NOTE: Probably redundant check, keep anyway for robustness
+            dist := linalg.length(get_center(e.pos,e.dim) - get_center(player.pos,player.dim))
+            append(&enemy_distances, Enemy_Distance{i, dist, e.health})
+        }
 
-    w.remaining_ticks -= 1
-    if w.remaining_ticks <= 0 {
+        less_func :: proc(ed0, ed1: Enemy_Distance) -> bool { return ed0.dist < ed1.dist }
+        slice.sort_by(enemy_distances[:], less_func)
+
+        targeted_enemy := 0 // index in enemy_distances
+
         for i in 0..<w.num_projectiles_to_fire {
             dz: Damage_Zone
             dz.pos = player.pos
@@ -294,13 +332,12 @@ magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Dama
 
             pool_add(&w.projectiles, projectile)
         }
-        w.remaining_ticks = MAGIC_WAND_COOLDOWN
     }
 
     // tick particles
     particle_emitter_tick(&w.emitter)
 }
 
-magic_wand_draw :: proc(w: Magic_Wand) {
+magic_wand_draw :: proc(w: ^Magic_Wand) {
     particle_emitter_draw(w.emitter)
 }

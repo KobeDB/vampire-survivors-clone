@@ -11,7 +11,7 @@ Level :: struct {
     player: Player,
     enemies: Pool(Entity),
     damage_zones: Pool(Damage_Zone),
-    weapons: Pool(Weapon),
+    weapons: Pool(Weapon_Union),
     damage_indicators: Pool(Damage_Indicator),
     xp_drops: Pool(XP_Drop),
     wave: Wave,
@@ -87,7 +87,7 @@ level_tick :: proc(using level: ^Level) {
     // ----------------------
     for wi in 0..<len(weapons.slots) {
         weapon, _ := pool_index_get(weapons, wi) or_continue
-        weapon_tick(weapon, player, &damage_zones, enemies)
+        weapon_tick((^Weapon)(weapon), player, &damage_zones, enemies)
     }
 
     // Potentially spawn enemies
@@ -320,7 +320,7 @@ level_draw :: proc(using level: Level) {
         // Draw weapons
         for i in 0..<len(weapons.slots) {
             weapon, _ := pool_index_get(weapons, i) or_continue
-            weapon_draw(weapon^, player)
+            weapon_draw((^Weapon)(weapon), player)
         }
 
         // // Draw test rectangle
