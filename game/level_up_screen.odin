@@ -37,9 +37,9 @@ level_up_screen_tick :: proc(level_up_screen: ^Level_Up_Screen, level: ^Level) {
             // Add selected weapon to weapons
             selected_weapon := sa.get(level_up_screen.options, level_up_screen.selected_option)
             switch selected_weapon {
-                case typeid_of(Whip):     { pool_add(&level.weapons, make_whip(&level.damage_zones)) }
-                case typeid_of(Bibles):   { pool_add(&level.weapons, make_bibles(&level.damage_zones)) }
-                case typeid_of(Magic_Wand):   { pool_add(&level.weapons, make_magic_wand(&level.damage_zones)) }
+                case Whip:     { pool_add(&level.weapons, make_whip(&level.damage_zones)) }
+                case Bibles:   { pool_add(&level.weapons, make_bibles(&level.damage_zones)) }
+                case Magic_Wand:   { pool_add(&level.weapons, make_magic_wand(&level.damage_zones)) }
             }
         }
 

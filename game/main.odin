@@ -38,16 +38,18 @@ transition_to_game_state :: proc(new_game_state: Game_State) {
 
             // Add available weapons to level-up options
             sa.clear(&level_up_screen.options)
-            weapon_variants := runtime.type_info_base(type_info_of(Weapon)).variant.(runtime.Type_Info_Union).variants
+            weapon_variants := runtime.type_info_base(type_info_of(Weapon_Union)).variant.(runtime.Type_Info_Union).variants
             for weapon_variant in weapon_variants {
+
                 taken := false
                 for wi in 0..<len(level.weapons.slots) {
                     taken_weapon, _ := pool_index_get(level.weapons, wi) or_continue
-                    if reflect.union_variant_typeid(taken_weapon^) == weapon_variant.id {
+                    if (^Weapon)(taken_weapon).weapon_type == weapon_variant.id {
                         taken = true
                         break
                     }
                 }
+
                 if !taken {
                     sa.append(&level_up_screen.options, weapon_variant.id)
                 }
