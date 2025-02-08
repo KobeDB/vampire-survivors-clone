@@ -40,8 +40,8 @@ weapon_tick :: proc(using weapon: ^Weapon, player: Player, damage_zones: ^Pool(D
     switch weapon_type {
         case Whip: { whip_tick((^Whip)(weapon), player) }
         case Bibles: { bibles_tick((^Bibles)(weapon), player) }
-        case Magic_Wand: { magic_wand_tick((^Magic_Wand)(weapon), player, damage_zones, enemies) }
-        case Cross: { cross_tick((^Cross)(weapon), player, enemies, damage_zones) }
+        case Magic_Wand: { projectile_weapon_tick((^Magic_Wand)(weapon), player, enemies, damage_zones) }
+        case Cross: { projectile_weapon_tick((^Cross)(weapon), player, enemies, damage_zones) }
         case: { fmt.eprintln("unhandled weapon tick") }
     }
 
@@ -214,17 +214,8 @@ bibles_draw :: proc(bibles: ^Bibles, player: Player) {
 }
 
 Magic_Wand :: struct {
-    using base: Weapon,
-    projectiles: Pool(Magic_Wand_Projectile),
-    num_projectiles_to_fire: int,
-    emitter: Particle_Emitter,
-}
-
-Magic_Wand_Projectile :: struct {
-    dz: Pool_Handle(Damage_Zone),
-    lifetime: int,
-    velocity: [2]f32,
-    health: int, // The maximum amount of enemies that can be hit by this projectile
+    using proj_weapon: Projectile_Weapon,
+    projectile_count: int,
 }
 
 MAGIC_WAND_COOLDOWN :: 200
@@ -232,97 +223,67 @@ MAGIC_WAND_DAMAGE :: 30
 MAGIC_WAND_MAX_PROJECTILES :: 1000
 MAGIC_WAND_PROJECTILE_LIFETIME :: 300
 MAGIC_WAND_PROJECTILE_SPEED :: 300
-MAGIC_WAND_DEFAULT_NUM_PROJECTILES :: 10
+MAGIC_WAND_PROJECTILE_COUNT :: 10
+MAGIC_WAND_TICKS_BETWEEN_SHOTS :: 1
 
 make_magic_wand :: proc(damage_zones: ^Pool(Damage_Zone)) -> Magic_Wand {
     result: Magic_Wand
 
-    result.weapon_type = Magic_Wand
-    result.cooldown_time = MAGIC_WAND_COOLDOWN
-    result.attack_time = 1 // Right now, the magic wand fires all its projectiles in one tick
-
-    pool_init(&result.projectiles, MAGIC_WAND_MAX_PROJECTILES)
-    result.remaining_ticks = MAGIC_WAND_COOLDOWN
-    result.num_projectiles_to_fire = MAGIC_WAND_DEFAULT_NUM_PROJECTILES
-
     particle_tex := get_texture("flare")
-    start_color := [3]f32{0,0,1}
-    end_color := [3]f32{0,1,1}
-    max_particles := 1000
-    particle_lifetime := 100
-    scaling := [2]f32{1,1}
-    particle_emitter_init(&result.emitter, particle_tex, start_color, end_color, max_particles, particle_lifetime, scaling)
+
+    emitter_info: Particle_Emitter_Init_Info
+    emitter_info.start_color = [3]f32{0,0,1}
+    emitter_info.end_color = [3]f32{0,1,1}
+    emitter_info.scaling = [2]f32{2,2}
+    emitter_info.particle_lifetime = 100
+    emitter_info.scaling = [2]f32{1,1}
+
+    projectile_weapon_init(&result.proj_weapon, Magic_Wand, MAGIC_WAND_COOLDOWN, 1, MAGIC_WAND_TICKS_BETWEEN_SHOTS, particle_tex, emitter_info, magic_wand_fire_projectiles)
+
+    result.projectile_count = MAGIC_WAND_PROJECTILE_COUNT
 
     return result
 }
 
-magic_wand_tick :: proc(w: ^Magic_Wand, player: Player, damage_zones: ^Pool(Damage_Zone), enemies: Pool(Entity)) {
-    // tick the projectiles
-    for pi in 0..<len(w.projectiles.slots) {
-        projectile, _ := pool_index_get(w.projectiles, pi) or_continue
-        dz := pool_get(projectile.dz)
-        projectile.lifetime -= 1
-        // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
-        if projectile.lifetime <= 0 || dz.enemy_hit_count >= projectile.health {
-            // first free the projectile's Damage_Zone
-            pool_free(projectile.dz)
-            // free the projectile itself
-            pool_index_free(&w.projectiles, pi)
-        }
-        else {
-            // Update projectile's movement
-            dz.pos += projectile.velocity * TICK_TIME
+magic_wand_fire_projectiles :: proc(wand: ^Projectile_Weapon, player: Player, enemies: Pool(Entity), damage_zones: ^Pool(Damage_Zone)) {
+    w := (^Magic_Wand)(wand)
+
+    enemy_distances := find_nearest_enemies(player, enemies)
+    targeted_enemy := 0
+
+    for i in 0..<w.projectile_count {
+        dz: Damage_Zone
+        dz.pos = player.pos
+        dz.dim = {20,20}
+        dz.damage = MAGIC_WAND_DAMAGE
+        dz.color = rl.SKYBLUE
+        dz.is_active = true
+        dz_handle := pool_add(damage_zones, dz)
+
+        projectile: Projectile
+        projectile.dz = dz_handle
+        projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
+        projectile.health = 1
+
+        // Go to next nearest enemy if currently targeted enemy would be dead
+        // because of previously fired projectiles
+        for targeted_enemy < len(enemy_distances) && enemy_distances[targeted_enemy].health <= 0 {
+            targeted_enemy += 1
         }
 
-        // emit trail particles
-        emit_interval := int(f32(MAGIC_WAND_PROJECTILE_LIFETIME) / 100)
-        if projectile.lifetime % emit_interval == 0 {
-            particle_emitter_emit(&w.emitter, get_center(dz.pos, dz.dim), 0)
+        if targeted_enemy < len(enemy_distances) {
+            target, _, ok := pool_index_get(enemies, enemy_distances[targeted_enemy].enemy_pool_index)
+            if !ok { panic("magic_wand_tick: getting target enemy from the enemy pool gone horribly wrong!") }
+            projectile.velocity = linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim)) * MAGIC_WAND_PROJECTILE_SPEED
+
+            enemy_distances[targeted_enemy].health -= dz.damage
+        } else {
+            // No enemy target => shoot in random direction
+            projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
         }
+
+        pool_add(&w.projectiles, projectile)
     }
-
-    if w.on_attack_event {
-        enemy_distances := find_nearest_enemies(player, enemies)
-
-        targeted_enemy := 0 // index in enemy_distances
-
-        for i in 0..<w.num_projectiles_to_fire {
-            dz: Damage_Zone
-            dz.pos = player.pos
-            dz.dim = {20,20}
-            dz.damage = MAGIC_WAND_DAMAGE
-            dz.color = rl.SKYBLUE
-            dz.is_active = true
-            dz_handle := pool_add(damage_zones, dz)
-
-            projectile: Magic_Wand_Projectile
-            projectile.dz = dz_handle
-            projectile.lifetime = MAGIC_WAND_PROJECTILE_LIFETIME
-            projectile.health = 1
-
-            // Go to next nearest enemy if currently targeted enemy would be dead
-            // because of previously fired projectiles
-            for targeted_enemy < len(enemy_distances) && enemy_distances[targeted_enemy].health <= 0 {
-                targeted_enemy += 1
-            }
-
-            if targeted_enemy < len(enemy_distances) {
-                target, _, ok := pool_index_get(enemies, enemy_distances[targeted_enemy].enemy_pool_index)
-                if !ok { panic("magic_wand_tick: getting target enemy from the enemy pool gone horribly wrong!") }
-                projectile.velocity = linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim)) * MAGIC_WAND_PROJECTILE_SPEED
-
-                enemy_distances[targeted_enemy].health -= dz.damage
-            } else {
-                // No enemy target => shoot in random direction
-                projectile.velocity = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
-            }
-
-            pool_add(&w.projectiles, projectile)
-        }
-    }
-
-    // tick particles
-    particle_emitter_tick(&w.emitter)
 }
 
 magic_wand_draw :: proc(w: ^Magic_Wand) {
@@ -352,11 +313,7 @@ Enemy_Distance_Pair :: struct {
 }
 
 Cross :: struct {
-    using base: Weapon,
-    projectiles: Pool(Cross_Projectile),
-    ticks_until_next_fire: int,
-    pending_projectiles: int,
-    emitter: Particle_Emitter,
+    using proj_weapon: Projectile_Weapon,
 }
 
 CROSS_PROJECTILE_COUNT :: 2
@@ -367,104 +324,49 @@ CROSS_PROJECTILE_LIFETIME :: 360
 CROSS_PROJECTILE_DAMAGE :: 1000
 CROSS_COOLDOWN :: 200
 
-Cross_Projectile :: struct {
-    dz: Pool_Handle(Damage_Zone),
-    lifetime: int,
-    velocity: [2]f32,
-    initial_direction: [2]f32,
-    rotation: f32,
-}
-
 make_cross :: proc(damage_zones: ^Pool(Damage_Zone)) -> Cross {
     result: Cross
-
-    result.weapon_type = Cross
-    result.cooldown_time = CROSS_COOLDOWN
-    result.attack_time = (CROSS_PROJECTILE_COUNT-1) * CROSS_TICKS_BETWEEN_SHOTS
-
-    pool_init(&result.projectiles, CROSS_MAX_PROJECTILES)
-
-    result.pending_projectiles = 0
 
     emitter_info: Particle_Emitter_Init_Info
     emitter_info.start_color = [3]f32{1,1,0}
     emitter_info.end_color = emitter_info.start_color
     emitter_info.scaling = [2]f32{2,2}
     emitter_info.particle_lifetime = 20
-    particle_emitter_init(&result.emitter, get_texture("cross"), emitter_info)
+
+    projectile_weapon_init(&result.proj_weapon, Cross, CROSS_COOLDOWN, CROSS_PROJECTILE_COUNT, CROSS_TICKS_BETWEEN_SHOTS, get_texture("cross"), emitter_info, cross_fire_projectiles)
 
     return result
 }
 
-cross_tick :: proc(cross: ^Cross, player: Player, enemies: Pool(Entity), damage_zones: ^Pool(Damage_Zone)) {
-    if cross.on_attack_event {
-        cross.pending_projectiles = CROSS_PROJECTILE_COUNT
+cross_fire_projectiles :: proc(w: ^Projectile_Weapon, player: Player, enemies: Pool(Entity), damage_zones: ^Pool(Damage_Zone)) {
+    cross := (^Cross)(w)
+    // Fire a single cross
+    enemy_distances := find_nearest_enemies(player, enemies)
+    proj_vel := [2]f32{}
+    if len(enemy_distances) != 0 {
+        target, _, ok := pool_index_get(enemies, enemy_distances[0].enemy_pool_index)
+        to_nearest_enemy := linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim))
+        proj_vel = to_nearest_enemy * CROSS_PROJECTILE_SPEED
+    }
+    else {
+        proj_vel = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
     }
 
-    cross.ticks_until_next_fire -= 1
+    dz: Damage_Zone
+    dz.pos = player.pos
+    dz.dim = {50,50}
+    dz.damage = CROSS_PROJECTILE_DAMAGE
+    dz.color = rl.BLUE
+    dz.is_active = true
 
-    if cross.pending_projectiles > 0 && cross.ticks_until_next_fire <= 0 {
-        cross.pending_projectiles -= 1
-        cross.ticks_until_next_fire = CROSS_TICKS_BETWEEN_SHOTS
+    proj: Projectile
+    proj.dz = pool_add(damage_zones, dz)
+    proj.lifetime = CROSS_PROJECTILE_LIFETIME
+    proj.velocity = proj_vel
+    proj.acceleration = -linalg.normalize(proj.velocity) * 500
+    proj.rotation_speed = 175
 
-        // Fire a single cross
-        enemy_distances := find_nearest_enemies(player, enemies)
-        proj_vel := [2]f32{}
-        if len(enemy_distances) != 0 {
-            target, _, ok := pool_index_get(enemies, enemy_distances[0].enemy_pool_index)
-            to_nearest_enemy := linalg.normalize(get_center(target.pos,target.dim)-get_center(player.pos,player.dim))
-            proj_vel = to_nearest_enemy * CROSS_PROJECTILE_SPEED
-        }
-        else {
-            proj_vel = random_unit_vec() * MAGIC_WAND_PROJECTILE_SPEED
-        }
-
-        dz: Damage_Zone
-        dz.pos = player.pos
-        dz.dim = {50,50}
-        dz.damage = CROSS_PROJECTILE_DAMAGE
-        dz.color = rl.BLUE
-        dz.is_active = true
-
-        proj: Cross_Projectile
-        proj.dz = pool_add(damage_zones, dz)
-        proj.lifetime = CROSS_PROJECTILE_LIFETIME
-        proj.velocity = proj_vel
-        proj.initial_direction = linalg.normalize(proj.velocity)
-
-        pool_add(&cross.projectiles, proj)
-    }
-
-    // tick projectiles
-    for pi in 0..<len(cross.projectiles.slots) {
-        projectile, _ := pool_index_get(cross.projectiles, pi) or_continue
-        dz := pool_get(projectile.dz)
-        projectile.lifetime -= 1
-        // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
-        if projectile.lifetime <= 0 {
-            // first free the projectile's Damage_Zone
-            pool_free(projectile.dz)
-            // free the projectile itself
-            pool_index_free(&cross.projectiles, pi)
-        }
-        else {
-            // Update projectile's movement
-            projectile.velocity += -500 * projectile.initial_direction * TICK_TIME // backwards acceleration for "boomerang" effect
-            dz.pos += projectile.velocity * TICK_TIME
-            projectile.rotation += 200 * TICK_TIME
-        }
-
-        // emit trail particles
-        emit_interval := 10
-        if projectile.lifetime % emit_interval == 0 {
-            info: Emit_Info
-            info.position = get_center(dz.pos, dz.dim)
-            info.rotation_speed = 200
-            particle_emitter_emit(&cross.emitter, info)
-        }
-    }
-
-    particle_emitter_tick(&cross.emitter)
+    pool_add(&cross.projectiles, proj)
 }
 
 cross_draw :: proc(cross: ^Cross) {
@@ -485,4 +387,100 @@ cross_draw :: proc(cross: ^Cross) {
 
         rl.DrawTexturePro(cross.emitter.texture, src_rec, dest_rec, origin, projectile.rotation, rl.WHITE)
     }
+}
+
+Projectile :: struct {
+    dz: Pool_Handle(Damage_Zone),
+    lifetime: int,
+    velocity: [2]f32,
+    acceleration: [2]f32,
+    rotation: f32,
+    rotation_speed: f32,
+    health: Maybe(int),
+}
+
+Projectile_Weapon :: struct {
+    using weapon: Weapon,
+    projectiles: Pool(Projectile),
+    ticks_until_next_shot: int,
+    pending_shots: int,
+    emitter: Particle_Emitter,
+
+    // constants (as long as weapon doesn't level)
+    shot_count: int,
+    ticks_between_shots: int,
+
+    // overriden functions
+    fire_projectiles: proc(^Projectile_Weapon, Player, Pool(Entity), ^Pool(Damage_Zone))
+}
+
+projectile_weapon_init :: proc(
+    w: ^Projectile_Weapon,
+    weapon_type: typeid,
+    cooldown_time: int,
+    shot_count: int,
+    ticks_between_shots: int,
+    particle_texture: rl.Texture2D,
+    emitter_info: Particle_Emitter_Init_Info,
+    fire_projectiles: proc(^Projectile_Weapon, Player, Pool(Entity), ^Pool(Damage_Zone)),
+    ) {
+    w^ = {} // ensure zeroed fields
+
+    w.weapon_type = weapon_type
+    w.cooldown_time = cooldown_time
+    w.attack_time = (shot_count-1) * ticks_between_shots
+
+    pool_init(&w.projectiles, 1000)
+    particle_emitter_init(&w.emitter, particle_texture, emitter_info)
+    w.ticks_between_shots = ticks_between_shots
+    w.shot_count = shot_count
+
+    w.fire_projectiles = fire_projectiles
+}
+
+projectile_weapon_tick :: proc(w: ^Projectile_Weapon, player: Player, enemies: Pool(Entity), damage_zones: ^Pool(Damage_Zone)) {
+    if w.on_attack_event {
+        w.pending_shots = w.shot_count
+    }
+
+    w.ticks_until_next_shot -= 1
+
+    if w.pending_shots > 0 && w.ticks_until_next_shot <= 0 {
+        w.pending_shots -= 1
+        w.ticks_until_next_shot = w.ticks_between_shots
+
+        w.fire_projectiles(w, player, enemies, damage_zones)
+    }
+
+    // tick projectiles
+    for pi in 0..<len(w.projectiles.slots) {
+        projectile, _ := pool_index_get(w.projectiles, pi) or_continue
+        dz := pool_get(projectile.dz)
+        projectile.lifetime -= 1
+        // free expired projectiles (lifetime expired or projectile has hit its max amount of enemies)
+        projectile_health := projectile.health.? or_else 9999
+        if projectile.lifetime <= 0 || dz.enemy_hit_count >= projectile_health {
+            // first free the projectile's Damage_Zone
+            pool_free(projectile.dz)
+            // free the projectile itself
+            pool_index_free(&w.projectiles, pi)
+        }
+        else {
+            // Update projectile's movement
+            projectile.velocity += projectile.acceleration * TICK_TIME // backwards acceleration for "boomerang" effect
+            dz.pos += projectile.velocity * TICK_TIME
+            projectile.rotation += projectile.rotation_speed * TICK_TIME
+        }
+
+        // emit trail particles
+        emit_interval := 10
+        if projectile.lifetime % emit_interval == 0 {
+            info: Emit_Info
+            info.position = get_center(dz.pos, dz.dim)
+            info.rotation_speed = 200
+            particle_emitter_emit(&w.emitter, info)
+        }
+    }
+
+    particle_emitter_tick(&w.emitter)
 }
